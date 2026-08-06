@@ -41,6 +41,15 @@
   var refreshJobsBtn = document.getElementById("refresh-jobs");
   var refreshReposBtn = document.getElementById("refresh-repos");
 
+  // Search elements
+  var searchForm = document.getElementById("search-form");
+  var searchQuery = document.getElementById("search-query");
+  var searchRepo = document.getElementById("search-repo");
+  var searchTopK = document.getElementById("search-topk");
+  var searchBtn = document.getElementById("search-btn");
+  var searchError = document.getElementById("search-error");
+  var searchResults = document.getElementById("search-results");
+
   // Handle for the active polling timer so we can cancel/replace it.
   var pollTimer = null;
 
@@ -348,11 +357,14 @@
         reposList.innerHTML = "";
         if (!Array.isArray(repos) || repos.length === 0) {
           reposList.innerHTML = '<p class="muted">No repositories indexed yet.</p>';
+          populateRepoFilter([]);
           return;
         }
         repos.forEach(function (repo) {
           reposList.appendChild(renderRepoItem(repo));
         });
+        // Keep the search repository filter in sync with indexed repos.
+        populateRepoFilter(repos);
       })
       .catch(function (err) {
         reposList.innerHTML =
@@ -365,9 +377,116 @@
       });
   }
 
+  /** Populate the search repo <select>, preserving the current selection when possible. */
+  function populateRepoFilter(repos) {
+    if (!searchRepo) return;
+    var current = searchRepo.value;
+    // First option is always "All repositories".
+    searchRepo.innerHTML = '<option value="">All repositories</option>';
+    (repos || []).forEach(function (repo) {
+      var opt = document.createElement("option");
+      opt.value = repo.slug || "";
+      opt.textContent = repo.slug || "(unknown)";
+      searchRepo.appendChild(opt);
+    });
+    // Restore prior selection if it still exists.
+    if (current) searchRepo.value = current;
+  }
+
+  // ---- Semantic search ----------------------------------------------------
+
+  /** Render one search hit as a result card. */
+  function renderSearchHit(hit, rank) {
+    var item = document.createElement("article");
+    item.className = "search-hit";
+
+    var scorePct = Math.round((Number(hit.score) || 0) * 1000) / 10; // one decimal %
+    var heading = hit.headingPath ? " &middot; " + esc(hit.headingPath) : "";
+
+    var head = document.createElement("div");
+    head.className = "search-hit-head";
+    head.innerHTML =
+      '<div class="search-hit-loc">' +
+      '<span class="rank">' + rank + "</span> " +
+      '<span class="mono">' + esc(hit.repositorySlug || "") + "</span> &mdash; " +
+      "<span>" + esc(hit.documentPath || "") + "</span>" + heading +
+      "</div>" +
+      '<span class="score-badge" title="Cosine similarity">' + esc(hit.score != null ? hit.score.toFixed(3) : "—") +
+      " (" + scorePct + "%)</span>";
+
+    var body = document.createElement("pre");
+    body.className = "search-hit-body";
+    body.textContent = hit.content || "";
+
+    item.appendChild(head);
+    item.appendChild(body);
+    return item;
+  }
+
+  function onSearch(event) {
+    event.preventDefault();
+    setAlert(searchError, "");
+
+    var query = searchQuery.value.trim();
+    if (!query) {
+      setAlert(searchError, "Please enter a search query.");
+      searchQuery.focus();
+      return;
+    }
+
+    var topK = parseInt(searchTopK.value, 10);
+    if (isNaN(topK) || topK < 1) topK = 5;
+    if (topK > 50) topK = 50;
+
+    var body = {
+      query: query,
+      topK: topK,
+      repositorySlug: searchRepo.value || null,
+    };
+
+    searchBtn.disabled = true;
+    searchBtn.textContent = "Searching…";
+    searchResults.setAttribute("aria-busy", "true");
+    searchResults.innerHTML = '<p class="muted">Searching&hellip;</p>';
+
+    fetchJson("/api/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then(function (data) {
+        searchResults.innerHTML = "";
+        var hits = (data && data.results) || [];
+        if (!hits.length) {
+          searchResults.innerHTML =
+            '<p class="muted">No matches for &ldquo;' + esc(query) + "&rdquo;.</p>";
+          return;
+        }
+        var summary = document.createElement("p");
+        summary.className = "search-summary muted";
+        summary.textContent =
+          "Found " + hits.length + (hits.length === 1 ? " result" : " results") +
+          ' for "' + query + '"';
+        searchResults.appendChild(summary);
+        hits.forEach(function (hit, i) {
+          searchResults.appendChild(renderSearchHit(hit, i + 1));
+        });
+      })
+      .catch(function (err) {
+        searchResults.innerHTML = "";
+        setAlert(searchError, err.message);
+      })
+      .finally(function () {
+        searchBtn.disabled = false;
+        searchBtn.textContent = "Search";
+        searchResults.removeAttribute("aria-busy");
+      });
+  }
+
   // ---- Wire up events + initial load --------------------------------------
 
   form.addEventListener("submit", onSubmit);
+  searchForm.addEventListener("submit", onSearch);
   refreshJobsBtn.addEventListener("click", loadJobs);
   refreshReposBtn.addEventListener("click", loadRepositories);
 

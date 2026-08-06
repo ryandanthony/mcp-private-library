@@ -20,6 +20,44 @@
 
   <main id="main" class="container">
     <!-- ============================================================= -->
+    <!-- Semantic search (mirrors the MCP search_docs tool)            -->
+    <!-- ============================================================= -->
+    <section class="card" aria-labelledby="search-heading">
+      <h2 id="search-heading">Search the library</h2>
+      <form id="search-form" novalidate>
+        <div class="field">
+          <label for="search-query">Query</label>
+          <input
+            type="search"
+            id="search-query"
+            name="query"
+            placeholder="e.g. how do I create an MCP server with stdio transport?"
+            autocomplete="off"
+            required
+          />
+        </div>
+        <div class="search-controls">
+          <div class="field">
+            <label for="search-repo">Repository</label>
+            <select id="search-repo" name="repositorySlug">
+              <option value="">All repositories</option>
+            </select>
+          </div>
+          <div class="field field-narrow">
+            <label for="search-topk">Results</label>
+            <input type="number" id="search-topk" name="topK" value="5" min="1" max="50" />
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="search-btn" class="btn btn-primary">Search</button>
+          </div>
+        </div>
+        <p id="search-error" class="error-text" role="alert" hidden></p>
+      </form>
+
+      <div id="search-results" class="search-results" aria-live="polite"></div>
+    </section>
+
+    <!-- ============================================================= -->
     <!-- Submit a new indexing job                                     -->
     <!-- ============================================================= -->
     <section class="card" aria-labelledby="submit-heading">

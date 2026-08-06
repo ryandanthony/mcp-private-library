@@ -105,6 +105,33 @@ api.MapGet("/repositories", async (LibraryStore store, CancellationToken ct) =>
     }));
 });
 
+// Semantic search, mirroring the MCP `search_docs` tool: embed the query then ANN search.
+api.MapPost("/search", async (SearchRequest req, IEmbeddingService embeddings, LibraryStore store, CancellationToken ct) =>
+{
+    if (req is null || string.IsNullOrWhiteSpace(req.Query))
+        return Results.BadRequest(new { error = "A search query is required." });
+
+    var topK = req.TopK is > 0 and <= 50 ? req.TopK.Value : 5;
+    var slug = string.IsNullOrWhiteSpace(req.RepositorySlug) ? null : req.RepositorySlug.Trim();
+
+    var embedding = await embeddings.EmbedOneAsync(req.Query, ct);
+    var results = await store.SearchAsync(embedding, topK, slug, ct);
+
+    return Results.Ok(new
+    {
+        query = req.Query,
+        count = results.Count,
+        results = results.Select(r => new
+        {
+            repositorySlug = r.RepositorySlug,
+            documentPath = r.DocumentPath,
+            headingPath = r.HeadingPath,
+            content = r.Content,
+            score = r.Score
+        })
+    });
+});
+
 // ---- MCP endpoint -----------------------------------------------------------
 app.MapMcp("/mcp");
 
@@ -125,3 +152,5 @@ static object ToDto(Job j) => new
 };
 
 public sealed record SubmitRequest(string Url);
+
+public sealed record SearchRequest(string Query, int? TopK, string? RepositorySlug);
