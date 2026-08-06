@@ -429,6 +429,7 @@ select {
   width: 100%;
 }
 .view { display: block; }
+.view[hidden] { display: none; }
 
 .view-header {
   display: flex;
