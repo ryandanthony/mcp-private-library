@@ -31,10 +31,11 @@ public sealed class IngestionQueue : IJobSubmitter
         if (!GitHubUrlParser.TryParse(url, out var repoRef, out var error))
             return new JobSubmission(0, JobStatus.Failed, error ?? "Invalid URL.");
 
-        var repo = await _store.UpsertRepositoryAsync(repoRef.CloneUrl, repoRef.Slug, ct);
+        var repo = await _store.UpsertRepositoryAsync(
+            repoRef.Id, repoRef.CloneUrl, repoRef.Slug, repoRef.CanonicalName, ct);
         var job = await _store.CreateJobAsync(repo.Id, repoRef.CloneUrl, ct);
         await _channel.Writer.WriteAsync(job.Id, ct);
-        return new JobSubmission(job.Id, JobStatus.Queued, $"Queued ingestion for {repoRef.Slug}.");
+        return new JobSubmission(job.Id, JobStatus.Queued, $"Queued ingestion for {repoRef.Slug} (id {repo.Id}).");
     }
 
     /// <summary>Re-signals any jobs already sitting in Queued (e.g. reloaded after a restart).</summary>

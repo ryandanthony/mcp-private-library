@@ -50,6 +50,13 @@
   var searchError = document.getElementById("search-error");
   var searchResults = document.getElementById("search-results");
 
+  // Repository-search elements
+  var repoSearchForm = document.getElementById("repo-search-form");
+  var repoSearchQuery = document.getElementById("repo-search-query");
+  var repoSearchBtn = document.getElementById("repo-search-btn");
+  var repoSearchError = document.getElementById("repo-search-error");
+  var repoSearchResults = document.getElementById("repo-search-results");
+
   // Handle for the active polling timer so we can cancel/replace it.
   var pollTimer = null;
 
@@ -332,8 +339,8 @@
       '<div class="primary">' +
       title +
       "</div>" +
-      '<div class="secondary">' +
-      esc(repo.url || "") +
+      '<div class="secondary mono">#' +
+      esc(repo.id || "") +
       "</div>";
 
     var right = document.createElement("div");
@@ -377,7 +384,7 @@
       });
   }
 
-  /** Populate the search repo <select>, preserving the current selection when possible. */
+  /** Populate the search repo <select> (value = repo ID), preserving selection when possible. */
   function populateRepoFilter(repos) {
     if (!searchRepo) return;
     var current = searchRepo.value;
@@ -385,12 +392,34 @@
     searchRepo.innerHTML = '<option value="">All repositories</option>';
     (repos || []).forEach(function (repo) {
       var opt = document.createElement("option");
-      opt.value = repo.slug || "";
-      opt.textContent = repo.slug || "(unknown)";
+      opt.value = repo.id || "";
+      opt.textContent = repo.slug || repo.id || "(unknown)";
       searchRepo.appendChild(opt);
     });
     // Restore prior selection if it still exists.
     if (current) searchRepo.value = current;
+  }
+
+  /**
+   * Scope the documentation search to a specific repository by ID and focus the query box.
+   * Called from repo-search result cards ("Search docs in this repo").
+   */
+  function scopeDocSearchToRepo(repoId, slug) {
+    if (!searchRepo) return;
+    // Ensure the option exists even if the repositories list hasn't refreshed yet.
+    var found = Array.prototype.some.call(searchRepo.options, function (o) {
+      return o.value === repoId;
+    });
+    if (!found && repoId) {
+      var opt = document.createElement("option");
+      opt.value = repoId;
+      opt.textContent = slug || repoId;
+      searchRepo.appendChild(opt);
+    }
+    searchRepo.value = repoId || "";
+    var section = document.getElementById("search-heading");
+    if (section) section.scrollIntoView({ behavior: "smooth", block: "start" });
+    searchQuery.focus();
   }
 
   // ---- Semantic search ----------------------------------------------------
@@ -441,7 +470,7 @@
     var body = {
       query: query,
       topK: topK,
-      repositorySlug: searchRepo.value || null,
+      repositoryId: searchRepo.value || null,
     };
 
     searchBtn.disabled = true;
@@ -483,10 +512,100 @@
       });
   }
 
+  // ---- Repository search --------------------------------------------------
+
+  /** Render one repository-search hit with a button to scope doc search to it. */
+  function renderRepoHit(hit, rank) {
+    var item = document.createElement("article");
+    item.className = "search-hit";
+
+    var head = document.createElement("div");
+    head.className = "search-hit-head";
+    var titleHtml = hit.url
+      ? '<a href="' + esc(hit.url) + '" target="_blank" rel="noopener noreferrer">' + esc(hit.slug || hit.id) + "</a>"
+      : esc(hit.slug || hit.id);
+    head.innerHTML =
+      '<div class="search-hit-loc">' +
+      '<span class="rank">' + rank + "</span> " + titleHtml +
+      ' <span class="mono muted">#' + esc(hit.id) + "</span>" +
+      "</div>" +
+      '<span class="score-badge">' + esc(hit.score != null ? hit.score.toFixed(3) : "—") + "</span>";
+
+    var meta = document.createElement("div");
+    meta.className = "secondary mono";
+    meta.textContent = (Number(hit.documents) || 0) + " docs · " + (Number(hit.chunks) || 0) + " chunks";
+
+    var summary = document.createElement("p");
+    summary.className = "repo-hit-summary";
+    summary.textContent = hit.summary || "";
+
+    var actions = document.createElement("div");
+    actions.className = "form-actions";
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-ghost";
+    btn.textContent = "Search docs in this repo →";
+    btn.addEventListener("click", function () {
+      scopeDocSearchToRepo(hit.id, hit.slug);
+    });
+    actions.appendChild(btn);
+
+    item.appendChild(head);
+    item.appendChild(meta);
+    if (hit.summary) item.appendChild(summary);
+    item.appendChild(actions);
+    return item;
+  }
+
+  function onRepoSearch(event) {
+    event.preventDefault();
+    setAlert(repoSearchError, "");
+
+    var query = repoSearchQuery.value.trim();
+    if (!query) {
+      setAlert(repoSearchError, "Please enter a query.");
+      repoSearchQuery.focus();
+      return;
+    }
+
+    repoSearchBtn.disabled = true;
+    repoSearchBtn.textContent = "Finding…";
+    repoSearchResults.setAttribute("aria-busy", "true");
+    repoSearchResults.innerHTML = '<p class="muted">Searching&hellip;</p>';
+
+    fetchJson("/api/repositories/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ query: query, topK: 5 }),
+    })
+      .then(function (data) {
+        repoSearchResults.innerHTML = "";
+        var hits = (data && data.results) || [];
+        if (!hits.length) {
+          repoSearchResults.innerHTML =
+            '<p class="muted">No repositories matched &ldquo;' + esc(query) + "&rdquo;.</p>";
+          return;
+        }
+        hits.forEach(function (hit, i) {
+          repoSearchResults.appendChild(renderRepoHit(hit, i + 1));
+        });
+      })
+      .catch(function (err) {
+        repoSearchResults.innerHTML = "";
+        setAlert(repoSearchError, err.message);
+      })
+      .finally(function () {
+        repoSearchBtn.disabled = false;
+        repoSearchBtn.textContent = "Find";
+        repoSearchResults.removeAttribute("aria-busy");
+      });
+  }
+
   // ---- Wire up events + initial load --------------------------------------
 
   form.addEventListener("submit", onSubmit);
   searchForm.addEventListener("submit", onSearch);
+  repoSearchForm.addEventListener("submit", onRepoSearch);
   refreshJobsBtn.addEventListener("click", loadJobs);
   refreshReposBtn.addEventListener("click", loadRepositories);
 

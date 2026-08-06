@@ -37,19 +37,23 @@ public sealed class DatabaseInitializer
         var sql = new StringBuilder();
         sql.Append($@"
 CREATE TABLE IF NOT EXISTS repositories (
-    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    url           TEXT NOT NULL,
-    slug          TEXT NOT NULL,
+    id             TEXT PRIMARY KEY,
+    url            TEXT NOT NULL,
+    slug           TEXT NOT NULL,
+    canonical_name TEXT NOT NULL,
+    summary        TEXT NULL,
+    readme_embedding vector({dim}) NULL,
     default_branch TEXT NULL,
     last_commit_sha TEXT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_repositories_slug ON repositories (slug);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_repositories_canonical ON repositories (canonical_name);
 
 CREATE TABLE IF NOT EXISTS jobs (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    repository_id   BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repository_id   TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     url             TEXT NOT NULL,
     status          TEXT NOT NULL,
     files_total     INT NOT NULL DEFAULT 0,
@@ -65,7 +69,7 @@ CREATE INDEX IF NOT EXISTS ix_jobs_repo ON jobs (repository_id);
 
 CREATE TABLE IF NOT EXISTS documents (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     path          TEXT NOT NULL,
     title         TEXT NULL,
     content_hash  TEXT NOT NULL,
@@ -76,7 +80,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_documents_repo_path ON documents (repositor
 CREATE TABLE IF NOT EXISTS chunks (
     id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     document_id    BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    repository_id  BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repository_id  TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     ordinal        INT NOT NULL,
     heading_path   TEXT NULL,
     content        TEXT NOT NULL,
@@ -89,11 +93,12 @@ CREATE INDEX IF NOT EXISTS ix_chunks_repo ON chunks (repository_id);
 
         await conn.ExecuteAsync(sql.ToString());
 
-        // ANN index for cosine similarity search. IVFFlat needs data to train, so it's fine to
-        // create empty; it will be usable once rows exist. HNSW would also work but is heavier.
+        // ANN indexes for cosine similarity search (HNSW). Safe to create empty.
         await conn.ExecuteAsync(@"
 CREATE INDEX IF NOT EXISTS ix_chunks_embedding
-    ON chunks USING hnsw (embedding vector_cosine_ops);");
+    ON chunks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS ix_repositories_readme_embedding
+    ON repositories USING hnsw (readme_embedding vector_cosine_ops);");
 
         _logger.LogInformation("Database schema ensured (vector dim = {Dim}).", dim);
     }

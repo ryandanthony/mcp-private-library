@@ -98,24 +98,24 @@ api.MapGet("/repositories", async (LibraryStore store, CancellationToken ct) =>
     var repos = await store.ListRepositoriesAsync(ct);
     return Results.Ok(repos.Select(r => new
     {
+        id = r.RepositoryId,
         slug = r.Slug,
         url = r.Url,
+        summary = r.Summary,
         documents = r.Documents,
         chunks = r.Chunks
     }));
 });
 
-// Semantic search, mirroring the MCP `search_docs` tool: embed the query then ANN search.
-api.MapPost("/search", async (SearchRequest req, IEmbeddingService embeddings, LibraryStore store, CancellationToken ct) =>
+// Repository-level semantic search (find a repo/tool by its README embedding).
+api.MapPost("/repositories/search", async (RepoSearchRequest req, IEmbeddingService embeddings, LibraryStore store, CancellationToken ct) =>
 {
     if (req is null || string.IsNullOrWhiteSpace(req.Query))
         return Results.BadRequest(new { error = "A search query is required." });
 
     var topK = req.TopK is > 0 and <= 50 ? req.TopK.Value : 5;
-    var slug = string.IsNullOrWhiteSpace(req.RepositorySlug) ? null : req.RepositorySlug.Trim();
-
     var embedding = await embeddings.EmbedOneAsync(req.Query, ct);
-    var results = await store.SearchAsync(embedding, topK, slug, ct);
+    var results = await store.SearchRepositoriesAsync(embedding, topK, ct);
 
     return Results.Ok(new
     {
@@ -123,6 +123,38 @@ api.MapPost("/search", async (SearchRequest req, IEmbeddingService embeddings, L
         count = results.Count,
         results = results.Select(r => new
         {
+            id = r.RepositoryId,
+            slug = r.Slug,
+            url = r.Url,
+            summary = Snippet(r.Summary, 300),
+            documents = r.Documents,
+            chunks = r.Chunks,
+            score = r.Score
+        })
+    });
+});
+
+// Semantic search over document chunks, mirroring the MCP `search_docs` tool.
+// Narrow to a specific repository by passing its hash ID in `repositoryId`.
+api.MapPost("/search", async (SearchRequest req, IEmbeddingService embeddings, LibraryStore store, CancellationToken ct) =>
+{
+    if (req is null || string.IsNullOrWhiteSpace(req.Query))
+        return Results.BadRequest(new { error = "A search query is required." });
+
+    var topK = req.TopK is > 0 and <= 50 ? req.TopK.Value : 5;
+    var repoId = string.IsNullOrWhiteSpace(req.RepositoryId) ? null : req.RepositoryId.Trim();
+
+    var embedding = await embeddings.EmbedOneAsync(req.Query, ct);
+    var results = await store.SearchAsync(embedding, topK, repoId, ct);
+
+    return Results.Ok(new
+    {
+        query = req.Query,
+        repositoryId = repoId,
+        count = results.Count,
+        results = results.Select(r => new
+        {
+            repositoryId = r.RepositoryId,
             repositorySlug = r.RepositorySlug,
             documentPath = r.DocumentPath,
             headingPath = r.HeadingPath,
@@ -151,6 +183,15 @@ static object ToDto(Job j) => new
     updatedAt = j.UpdatedAt
 };
 
+static string? Snippet(string? text, int max)
+{
+    if (string.IsNullOrWhiteSpace(text)) return text;
+    var collapsed = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    return collapsed.Length <= max ? collapsed : collapsed[..max].TrimEnd() + "…";
+}
+
 public sealed record SubmitRequest(string Url);
 
-public sealed record SearchRequest(string Query, int? TopK, string? RepositorySlug);
+public sealed record SearchRequest(string Query, int? TopK, string? RepositoryId);
+
+public sealed record RepoSearchRequest(string Query, int? TopK);

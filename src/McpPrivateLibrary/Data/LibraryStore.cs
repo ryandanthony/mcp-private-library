@@ -12,20 +12,23 @@ public sealed class LibraryStore
 
     // ---- Repositories -----------------------------------------------------
 
-    public async Task<Repository> UpsertRepositoryAsync(string url, string slug, CancellationToken ct = default)
+    public async Task<Repository> UpsertRepositoryAsync(
+        string id, string url, string slug, string canonicalName, CancellationToken ct = default)
     {
         const string sql = @"
-INSERT INTO repositories (url, slug)
-VALUES (@Url, @Slug)
-ON CONFLICT (slug) DO UPDATE SET url = EXCLUDED.url, updated_at = now()
-RETURNING id, url, slug, default_branch AS DefaultBranch, last_commit_sha AS LastCommitSha,
+INSERT INTO repositories (id, url, slug, canonical_name)
+VALUES (@Id, @Url, @Slug, @CanonicalName)
+ON CONFLICT (id) DO UPDATE SET url = EXCLUDED.url, slug = EXCLUDED.slug,
+    canonical_name = EXCLUDED.canonical_name, updated_at = now()
+RETURNING id, url, slug, canonical_name AS CanonicalName, summary,
+          default_branch AS DefaultBranch, last_commit_sha AS LastCommitSha,
           created_at AS CreatedAt, updated_at AS UpdatedAt;";
         await using var conn = _factory.Create();
-        return await conn.QuerySingleAsync<Repository>(
-            new CommandDefinition(sql, new { Url = url, Slug = slug }, cancellationToken: ct));
+        return await conn.QuerySingleAsync<Repository>(new CommandDefinition(
+            sql, new { Id = id, Url = url, Slug = slug, CanonicalName = canonicalName }, cancellationToken: ct));
     }
 
-    public async Task UpdateRepositoryCommitAsync(long repoId, string? branch, string? sha, CancellationToken ct = default)
+    public async Task UpdateRepositoryCommitAsync(string repoId, string? branch, string? sha, CancellationToken ct = default)
     {
         const string sql = @"
 UPDATE repositories SET default_branch = @Branch, last_commit_sha = @Sha, updated_at = now()
@@ -34,9 +37,21 @@ WHERE id = @Id;";
         await conn.ExecuteAsync(new CommandDefinition(sql, new { Id = repoId, Branch = branch, Sha = sha }, cancellationToken: ct));
     }
 
+    /// <summary>Stores the repo-level README summary and its embedding (used for repo search).</summary>
+    public async Task UpdateRepositoryReadmeAsync(
+        string repoId, string? summary, Pgvector.Vector? embedding, CancellationToken ct = default)
+    {
+        const string sql = @"
+UPDATE repositories SET summary = @Summary, readme_embedding = @Embedding, updated_at = now()
+WHERE id = @Id;";
+        await using var conn = _factory.Create();
+        await conn.ExecuteAsync(new CommandDefinition(
+            sql, new { Id = repoId, Summary = summary, Embedding = embedding }, cancellationToken: ct));
+    }
+
     // ---- Jobs -------------------------------------------------------------
 
-    public async Task<Job> CreateJobAsync(long repoId, string url, CancellationToken ct = default)
+    public async Task<Job> CreateJobAsync(string repoId, string url, CancellationToken ct = default)
     {
         const string sql = @"
 INSERT INTO jobs (repository_id, url, status)
@@ -126,32 +141,10 @@ WHERE status NOT IN (@Completed, @Failed);";
         }, cancellationToken: ct));
     }
 
-    public async Task<IReadOnlyList<Job>> ClaimQueuedJobsAsync(int limit, CancellationToken ct = default)
-    {
-        // Atomically claim queued jobs so a worker won't double-process. Uses SKIP LOCKED.
-        const string sql = @"
-WITH claimed AS (
-    SELECT id FROM jobs WHERE status = @Queued ORDER BY id LIMIT @Limit FOR UPDATE SKIP LOCKED
-)
-UPDATE jobs j SET status = @Cloning, updated_at = now()
-FROM claimed WHERE j.id = claimed.id
-RETURNING j.id, j.repository_id AS RepositoryId, j.url, j.status, j.files_total AS FilesTotal,
-          j.files_processed AS FilesProcessed, j.chunks_total AS ChunksTotal,
-          j.chunks_embedded AS ChunksEmbedded, j.error, j.created_at AS CreatedAt, j.updated_at AS UpdatedAt;";
-        await using var conn = _factory.Create();
-        var rows = await conn.QueryAsync<Job>(new CommandDefinition(sql, new
-        {
-            Queued = JobStatus.Queued.ToString(),
-            Cloning = JobStatus.Cloning.ToString(),
-            Limit = limit
-        }, cancellationToken: ct));
-        return rows.ToList();
-    }
-
     // ---- Documents & Chunks ----------------------------------------------
 
     /// <summary>Removes all documents/chunks for a repo so re-ingestion starts clean.</summary>
-    public async Task ClearRepositoryContentAsync(long repoId, CancellationToken ct = default)
+    public async Task ClearRepositoryContentAsync(string repoId, CancellationToken ct = default)
     {
         await using var conn = _factory.Create();
         await conn.ExecuteAsync(new CommandDefinition(
@@ -186,7 +179,7 @@ RETURNING id;";
         }, cancellationToken: ct));
     }
 
-    public async Task<IReadOnlyList<Chunk>> GetChunksMissingEmbeddingsAsync(long repoId, int limit, CancellationToken ct = default)
+    public async Task<IReadOnlyList<Chunk>> GetChunksMissingEmbeddingsAsync(string repoId, int limit, CancellationToken ct = default)
     {
         const string sql = @"
 SELECT id, document_id AS DocumentId, repository_id AS RepositoryId, ordinal,
@@ -208,12 +201,14 @@ FROM chunks WHERE repository_id = @RepoId AND embedding IS NULL ORDER BY id LIMI
 
     // ---- Search -----------------------------------------------------------
 
+    /// <summary>Semantic search over document chunks, optionally narrowed to one repository by ID.</summary>
     public async Task<IReadOnlyList<SearchResult>> SearchAsync(
-        Pgvector.Vector queryEmbedding, int topK, string? repoSlug, CancellationToken ct = default)
+        Pgvector.Vector queryEmbedding, int topK, string? repositoryId, CancellationToken ct = default)
     {
         // Cosine distance operator <=> ; score = 1 - distance.
         const string sql = @"
-SELECT r.slug AS RepositorySlug,
+SELECT r.id AS RepositoryId,
+       r.slug AS RepositorySlug,
        d.path AS DocumentPath,
        c.heading_path AS HeadingPath,
        c.content AS Content,
@@ -222,28 +217,51 @@ FROM chunks c
 JOIN documents d ON d.id = c.document_id
 JOIN repositories r ON r.id = c.repository_id
 WHERE c.embedding IS NOT NULL
-  AND (@Slug IS NULL OR r.slug = @Slug)
+  AND (@RepoId IS NULL OR r.id = @RepoId)
 ORDER BY c.embedding <=> @Query
 LIMIT @TopK;";
         await using var conn = _factory.Create();
         var rows = await conn.QueryAsync<SearchResult>(new CommandDefinition(
-            sql, new { Query = queryEmbedding, TopK = topK, Slug = repoSlug }, cancellationToken: ct));
+            sql, new { Query = queryEmbedding, TopK = topK, RepoId = repositoryId }, cancellationToken: ct));
         return rows.ToList();
     }
 
-    public async Task<IReadOnlyList<(string Slug, string Url, int Documents, int Chunks)>> ListRepositoriesAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Repository-level semantic search over the root-README embeddings. Lets a caller first find
+    /// the right repo/tool, then narrow document search to that repository by ID.
+    /// </summary>
+    public async Task<IReadOnlyList<RepositorySearchResult>> SearchRepositoriesAsync(
+        Pgvector.Vector queryEmbedding, int topK, CancellationToken ct = default)
     {
         const string sql = @"
-SELECT r.slug AS Slug, r.url AS Url,
+SELECT r.id AS RepositoryId, r.slug AS Slug, r.url AS Url, r.summary AS Summary,
+       (SELECT COUNT(*) FROM documents d WHERE d.repository_id = r.id) AS Documents,
+       (SELECT COUNT(*) FROM chunks c WHERE c.repository_id = r.id) AS Chunks,
+       1 - (r.readme_embedding <=> @Query) AS Score
+FROM repositories r
+WHERE r.readme_embedding IS NOT NULL
+ORDER BY r.readme_embedding <=> @Query
+LIMIT @TopK;";
+        await using var conn = _factory.Create();
+        var rows = await conn.QueryAsync<RepositorySearchResult>(new CommandDefinition(
+            sql, new { Query = queryEmbedding, TopK = topK }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
+    public async Task<IReadOnlyList<RepositorySearchResult>> ListRepositoriesAsync(CancellationToken ct = default)
+    {
+        const string sql = @"
+SELECT r.id AS RepositoryId, r.slug AS Slug, r.url AS Url, r.summary AS Summary,
        COUNT(DISTINCT d.id) AS Documents,
-       COUNT(DISTINCT c.id) AS Chunks
+       COUNT(DISTINCT c.id) AS Chunks,
+       0.0 AS Score
 FROM repositories r
 LEFT JOIN documents d ON d.repository_id = r.id
 LEFT JOIN chunks c ON c.repository_id = r.id
-GROUP BY r.id, r.slug, r.url
+GROUP BY r.id, r.slug, r.url, r.summary
 ORDER BY r.slug;";
         await using var conn = _factory.Create();
-        var rows = await conn.QueryAsync(new CommandDefinition(sql, cancellationToken: ct));
-        return rows.Select(x => ((string)x.slug, (string)x.url, (int)(long)x.documents, (int)(long)x.chunks)).ToList();
+        var rows = await conn.QueryAsync<RepositorySearchResult>(new CommandDefinition(sql, cancellationToken: ct));
+        return rows.ToList();
     }
 }

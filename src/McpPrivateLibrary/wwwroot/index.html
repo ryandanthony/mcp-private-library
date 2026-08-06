@@ -20,10 +20,38 @@
 
   <main id="main" class="container">
     <!-- ============================================================= -->
+    <!-- Find a repository (repo-level search over README embeddings)   -->
+    <!-- ============================================================= -->
+    <section class="card" aria-labelledby="repo-search-heading">
+      <h2 id="repo-search-heading">Find a repository</h2>
+      <p class="muted">Search across indexed repositories by what they do. Pick a result to scope document search below.</p>
+      <form id="repo-search-form" novalidate>
+        <div class="search-controls">
+          <div class="field">
+            <label for="repo-search-query">Query</label>
+            <input
+              type="search"
+              id="repo-search-query"
+              name="query"
+              placeholder="e.g. message bus for .NET, or MCP server SDK"
+              autocomplete="off"
+              required
+            />
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="repo-search-btn" class="btn btn-primary">Find</button>
+          </div>
+        </div>
+        <p id="repo-search-error" class="error-text" role="alert" hidden></p>
+      </form>
+      <div id="repo-search-results" class="search-results" aria-live="polite"></div>
+    </section>
+
+    <!-- ============================================================= -->
     <!-- Semantic search (mirrors the MCP search_docs tool)            -->
     <!-- ============================================================= -->
     <section class="card" aria-labelledby="search-heading">
-      <h2 id="search-heading">Search the library</h2>
+      <h2 id="search-heading">Search documentation</h2>
       <form id="search-form" novalidate>
         <div class="field">
           <label for="search-query">Query</label>
@@ -39,7 +67,7 @@
         <div class="search-controls">
           <div class="field">
             <label for="search-repo">Repository</label>
-            <select id="search-repo" name="repositorySlug">
+            <select id="search-repo" name="repositoryId">
               <option value="">All repositories</option>
             </select>
           </div>

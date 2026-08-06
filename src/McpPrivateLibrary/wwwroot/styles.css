@@ -360,3 +360,10 @@ select {
   max-height: 260px;
   overflow: auto;
 }
+
+.repo-hit-summary {
+  margin: 8px 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--muted);
+}

@@ -13,10 +13,15 @@ public enum JobStatus
 
 public sealed class Repository
 {
-    public long Id { get; set; }
+    /// <summary>Stable hash ID: sha256("github.com/owner/repo")[..16].</summary>
+    public string Id { get; set; } = "";
     public string Url { get; set; } = "";
     /// <summary>Normalized owner/name, e.g. "org/repo".</summary>
     public string Slug { get; set; } = "";
+    /// <summary>Provider-qualified canonical name, e.g. "github.com/org/repo".</summary>
+    public string CanonicalName { get; set; } = "";
+    /// <summary>Short summary (derived from the root README) used for repo-level search display.</summary>
+    public string? Summary { get; set; }
     public string? DefaultBranch { get; set; }
     public string? LastCommitSha { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -26,7 +31,7 @@ public sealed class Repository
 public sealed class Job
 {
     public long Id { get; set; }
-    public long RepositoryId { get; set; }
+    public string RepositoryId { get; set; } = "";
     public string Url { get; set; } = "";
     public JobStatus Status { get; set; }
     public int FilesTotal { get; set; }
@@ -41,7 +46,7 @@ public sealed class Job
 public sealed class Document
 {
     public long Id { get; set; }
-    public long RepositoryId { get; set; }
+    public string RepositoryId { get; set; } = "";
     /// <summary>Path relative to the repo root.</summary>
     public string Path { get; set; } = "";
     public string? Title { get; set; }
@@ -54,7 +59,7 @@ public sealed class Chunk
 {
     public long Id { get; set; }
     public long DocumentId { get; set; }
-    public long RepositoryId { get; set; }
+    public string RepositoryId { get; set; } = "";
     public int Ordinal { get; set; }
     /// <summary>Heading breadcrumb, e.g. "Guide &gt; Installation".</summary>
     public string? HeadingPath { get; set; }
@@ -62,12 +67,25 @@ public sealed class Chunk
     public int TokenEstimate { get; set; }
 }
 
-/// <summary>A search hit returned to callers / MCP clients.</summary>
+/// <summary>A document-chunk search hit returned to callers / MCP clients.</summary>
 public sealed class SearchResult
 {
+    public string RepositoryId { get; set; } = "";
     public string RepositorySlug { get; set; } = "";
     public string DocumentPath { get; set; } = "";
     public string? HeadingPath { get; set; }
     public string Content { get; set; } = "";
+    public double Score { get; set; }
+}
+
+/// <summary>A repository-level search hit (matches on the root README embedding).</summary>
+public sealed class RepositorySearchResult
+{
+    public string RepositoryId { get; set; } = "";
+    public string Slug { get; set; } = "";
+    public string Url { get; set; } = "";
+    public string? Summary { get; set; }
+    public int Documents { get; set; }
+    public int Chunks { get; set; }
     public double Score { get; set; }
 }

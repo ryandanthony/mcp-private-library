@@ -127,6 +127,9 @@ public sealed class IngestionService
             await _store.UpdateJobProgressAsync(job, ct);
             await EmbedPendingAsync(job, ct);
 
+            // 5. Embed the root README as a repo-level vector so the repo itself is searchable.
+            await EmbedRepositoryReadmeAsync(job, clone.LocalPath, files, ct);
+
             job.Status = JobStatus.Completed;
             await _store.UpdateJobProgressAsync(job, ct);
             _logger.LogInformation("Job {JobId}: completed ({Chunks} chunks).", job.Id, job.ChunksEmbedded);
@@ -170,5 +173,64 @@ public sealed class IngestionService
             job.ChunksEmbedded += batch.Count;
             await _store.UpdateJobProgressAsync(job, ct);
         }
+    }
+
+    /// <summary>
+    /// Finds the repository's root README, stores a short summary, and embeds it as the repo-level
+    /// vector used by repository search. Falls back gracefully if no README is present.
+    /// </summary>
+    private async Task EmbedRepositoryReadmeAsync(Job job, string repoRoot, IReadOnlyList<MarkdownFile> files, CancellationToken ct)
+    {
+        try
+        {
+            // Prefer a root-level README (README.md / readme.markdown etc.), case-insensitive.
+            var readme = files
+                .Where(f => !f.RelativePath.Contains('/'))
+                .FirstOrDefault(f => Path.GetFileNameWithoutExtension(f.RelativePath)
+                    .Equals("README", StringComparison.OrdinalIgnoreCase));
+
+            string summarySource;
+            if (readme is not null)
+            {
+                summarySource = await File.ReadAllTextAsync(readme.AbsolutePath, ct);
+            }
+            else
+            {
+                // No README: synthesize a description from the slug so the repo is still searchable.
+                _logger.LogInformation("Job {JobId}: no root README; using slug for repo embedding.", job.Id);
+                summarySource = job.Url;
+            }
+
+            var summary = BuildSummary(summarySource);
+            // Embed the summary text (bounded) as the repo-level vector.
+            var embedding = await _embeddings.EmbedOneAsync(summary, ct);
+            await _store.UpdateRepositoryReadmeAsync(job.RepositoryId, summary, embedding, ct);
+            _logger.LogInformation("Job {JobId}: stored repo-level README embedding.", job.Id);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // Repo-level embedding is best-effort; don't fail the whole ingestion over it.
+            _logger.LogWarning(ex, "Job {JobId}: failed to embed root README.", job.Id);
+        }
+    }
+
+    /// <summary>Produces a compact, embedding-friendly summary from README text.</summary>
+    private static string BuildSummary(string content)
+    {
+        content = content.Replace("\r\n", "\n");
+        // Drop YAML front-matter if present.
+        if (content.StartsWith("---", StringComparison.Ordinal))
+        {
+            var end = content.IndexOf("\n---", 3, StringComparison.Ordinal);
+            if (end >= 0)
+            {
+                var after = content.IndexOf('\n', end + 1);
+                if (after >= 0) content = content[(after + 1)..];
+            }
+        }
+        var trimmed = content.Trim();
+        const int max = 2000;
+        return trimmed.Length <= max ? trimmed : trimmed[..max];
     }
 }

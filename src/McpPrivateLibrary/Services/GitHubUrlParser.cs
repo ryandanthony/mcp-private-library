@@ -1,10 +1,29 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace McpPrivateLibrary.Services;
 
 public sealed record GitHubRepoRef(string CloneUrl, string Owner, string Name)
 {
+    /// <summary>Human-friendly "owner/repo".</summary>
     public string Slug => $"{Owner}/{Name}".ToLowerInvariant();
+
+    /// <summary>Provider-qualified canonical identity, e.g. "github.com/modelcontextprotocol/csharp-sdk".</summary>
+    public string CanonicalName => $"github.com/{Owner}/{Name}".ToLowerInvariant();
+
+    /// <summary>
+    /// Stable, collision-resistant repo ID: SHA-256 of the canonical name, hex-encoded and
+    /// truncated to 16 chars (64 bits). Deterministic across runs so the same repo always maps
+    /// to the same ID.
+    /// </summary>
+    public string Id => ComputeId(CanonicalName);
+
+    public static string ComputeId(string canonicalName)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(canonicalName.ToLowerInvariant()));
+        return Convert.ToHexString(bytes)[..16].ToLowerInvariant();
+    }
 }
 
 /// <summary>

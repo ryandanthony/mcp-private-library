@@ -48,12 +48,21 @@ An MCP (Model Context Protocol) server that indexes the Markdown documentation o
 
 ## HTTP API
 
-| Method | Path                     | Description                                             |
-| ------ | ------------------------ | ------------------------------------------------------- |
-| POST   | `/api/jobs`              | Submit a GitHub URL to start a new indexing job.        |
-| GET    | `/api/jobs/{id}`         | Get the status and progress of a single job.            |
-| GET    | `/api/jobs`              | List all jobs.                                          |
-| GET    | `/api/repositories`      | List repositories that have been indexed.               |
+| Method | Path                       | Description                                                             |
+| ------ | -------------------------- | ----------------------------------------------------------------------- |
+| POST   | `/api/jobs`                | Submit a GitHub URL to start a new indexing job.                        |
+| GET    | `/api/jobs/{id}`           | Get the status and progress of a single job.                            |
+| GET    | `/api/jobs`                | List all jobs.                                                          |
+| GET    | `/api/repositories`        | List indexed repositories (each with its hash `id`, slug and counts).   |
+| POST   | `/api/repositories/search` | Repository-level search: find a repo/tool by its README. `{query,topK}`.|
+| POST   | `/api/search`              | Document search. Narrow to one repo with `repositoryId`. `{query,topK,repositoryId}`. |
+
+### Repository IDs
+
+Each repository has a stable hash `id` = `sha256("github.com/<owner>/<repo>")` truncated to
+16 hex chars (e.g. `github.com/modelcontextprotocol/csharp-sdk` -> `b313806361dfd9a1`). The
+same repo always maps to the same ID. Use `/api/repositories/search` (or the `search_repositories`
+MCP tool) to discover a repo's ID, then pass it as `repositoryId` to narrow document search.
 
 Job status reflects the processing pipeline (for example: queued, cloning,
 parsing, chunking, embedding, done, or failed) along with per-file progress counts.
@@ -65,10 +74,15 @@ MCP client at `http://localhost:5171/mcp`.
 
 Available tools:
 
+- **`search_repositories`** — semantic search *for* repositories/tools by matching each
+  repository's root README. Returns matches with their hash `id` (use it to narrow `search_docs`).
 - **`search_docs`** — semantic search over the indexed Markdown, returning the most
-  relevant chunks with their source metadata.
-- **`list_repositories`** — list the repositories that have been indexed.
+  relevant chunks with their source metadata. Optionally narrow to one repo via `repositoryId`.
+- **`list_repositories`** — list the repositories that have been indexed (with their hash IDs).
 - **`job_status`** — check the status/progress of an indexing job.
+
+During ingestion the repository's root `README.md` is embedded as a repo-level vector, which is
+what `search_repositories` matches against.
 
 ## Configuration
 

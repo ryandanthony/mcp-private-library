@@ -17,6 +17,12 @@ curl -s -X POST "$BASE" -H "$CT" -H "$ACCEPT" \
   | tr '\n' ' ' | sed 's/data: //g'
 echo; echo
 
+echo "=== tools/call search_repositories ==="
+curl -s -X POST "$BASE" -H "$CT" -H "$ACCEPT" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search_repositories","arguments":{"query":"C# SDK for building MCP servers","topK":2}}}' \
+  | tr '\n' ' ' | sed 's/data: //g'
+echo; echo
+
 echo "=== tools/call list_repositories ==="
 curl -s -X POST "$BASE" -H "$CT" -H "$ACCEPT" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_repositories","arguments":{}}}' \
