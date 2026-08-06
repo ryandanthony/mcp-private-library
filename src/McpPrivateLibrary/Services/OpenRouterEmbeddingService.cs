@@ -1,5 +1,4 @@
 using System.Net.Http.Json;
-using System.Security.Cryptography;
 using System.Text.Json.Serialization;
 using McpPrivateLibrary.Configuration;
 using Microsoft.Extensions.Options;
@@ -15,16 +14,14 @@ public interface IEmbeddingService
 }
 
 /// <summary>
-/// Embeddings via OpenRouter's OpenAI-compatible /embeddings endpoint. When no API key is
-/// configured it transparently falls back to a deterministic hash-based embedder so the whole
-/// pipeline is testable offline (search quality will be poor, but plumbing works end to end).
+/// Embeddings via OpenRouter's OpenAI-compatible /embeddings endpoint. An API key is required;
+/// the service fails fast at startup if one is not configured (no offline fallback).
 /// </summary>
 public sealed class OpenRouterEmbeddingService : IEmbeddingService
 {
     private readonly HttpClient _http;
     private readonly EmbeddingOptions _options;
     private readonly ILogger<OpenRouterEmbeddingService> _logger;
-    private readonly bool _useRemote;
 
     public OpenRouterEmbeddingService(
         HttpClient http,
@@ -34,23 +31,20 @@ public sealed class OpenRouterEmbeddingService : IEmbeddingService
         _http = http;
         _options = options.Value.Embedding;
         _logger = logger;
-        _useRemote = _options.HasApiKey;
 
-        if (_useRemote)
+        if (!_options.HasApiKey)
         {
-            _http.BaseAddress = new Uri(_options.BaseUrl.TrimEnd('/') + "/");
-            _http.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _options.ApiKey);
-            // OpenRouter recommends these attribution headers.
-            _http.DefaultRequestHeaders.TryAddWithoutValidation("HTTP-Referer", "https://github.com/mcp-private-library");
-            _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Title", "MCP Private Library");
+            throw new InvalidOperationException(
+                "No OpenRouter API key configured. Set Library:Embedding:ApiKey (e.g. in appsettings.Local.json) " +
+                "to enable embeddings. There is no offline fallback.");
         }
-        else
-        {
-            _logger.LogWarning(
-                "No OpenRouter API key configured; using deterministic local embedder (dim {Dim}). Set Library:Embedding:ApiKey for real semantic search.",
-                _options.Dimensions);
-        }
+
+        _http.BaseAddress = new Uri(_options.BaseUrl.TrimEnd('/') + "/");
+        _http.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _options.ApiKey);
+        // OpenRouter recommends these attribution headers.
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("HTTP-Referer", "https://github.com/mcp-private-library");
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Title", "MCP Private Library");
     }
 
     public int Dimensions => _options.Dimensions;
@@ -64,9 +58,7 @@ public sealed class OpenRouterEmbeddingService : IEmbeddingService
     public async Task<IReadOnlyList<Vector>> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken ct = default)
     {
         if (inputs.Count == 0) return Array.Empty<Vector>();
-        return _useRemote
-            ? await EmbedRemoteAsync(inputs, ct)
-            : inputs.Select(LocalEmbed).ToList();
+        return await EmbedRemoteAsync(inputs, ct);
     }
 
     private async Task<IReadOnlyList<Vector>> EmbedRemoteAsync(IReadOnlyList<string> inputs, CancellationToken ct)
@@ -120,39 +112,6 @@ public sealed class OpenRouterEmbeddingService : IEmbeddingService
         var adjusted = new float[_options.Dimensions];
         Array.Copy(embedding, adjusted, Math.Min(embedding.Length, _options.Dimensions));
         return adjusted;
-    }
-
-    /// <summary>
-    /// Deterministic bag-of-words hashing embedder. Not semantically meaningful, but stable and
-    /// dependency-free so the ingestion + storage + search plumbing can be exercised without a key.
-    /// </summary>
-    private Vector LocalEmbed(string input)
-    {
-        var dim = _options.Dimensions;
-        var vec = new float[dim];
-        foreach (var token in Tokenize(input))
-        {
-            var hash = BitConverter.ToUInt32(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)), 0);
-            var idx = (int)(hash % (uint)dim);
-            var sign = (hash & 0x80000000) == 0 ? 1f : -1f;
-            vec[idx] += sign;
-        }
-        // L2 normalize so cosine distance behaves.
-        var norm = MathF.Sqrt(vec.Sum(v => v * v));
-        if (norm > 0)
-            for (var i = 0; i < dim; i++) vec[i] /= norm;
-        return new Vector(vec);
-    }
-
-    private static IEnumerable<string> Tokenize(string text)
-    {
-        var sb = new System.Text.StringBuilder();
-        foreach (var ch in text.ToLowerInvariant())
-        {
-            if (char.IsLetterOrDigit(ch)) sb.Append(ch);
-            else if (sb.Length > 0) { yield return sb.ToString(); sb.Clear(); }
-        }
-        if (sb.Length > 0) yield return sb.ToString();
     }
 
     private sealed record EmbeddingRequest(

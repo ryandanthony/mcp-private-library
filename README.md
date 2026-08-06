@@ -1,6 +1,6 @@
 # MCP Private Library
 
-An MCP (Model Context Protocol) server that indexes the Markdown documentation of GitHub repositories and makes it semantically searchable. Submit a GitHub repo URL through a minimal web UI (or the HTTP API); the app clones the repo, extracts every Markdown file, chunks and embeds the content, and stores the vectors in Postgres. MCP clients can then run semantic search over the indexed docs. Built in C# / ASP.NET Core with Dapper for data access, PostgreSQL + [pgvector](https://github.com/pgvector/pgvector) for vector similarity search, and OpenRouter for embeddings (with an offline deterministic fallback embedder when no API key is set).
+An MCP (Model Context Protocol) server that indexes the Markdown documentation of GitHub repositories and makes it semantically searchable. Submit a GitHub repo URL through a minimal web UI (or the HTTP API); the app clones the repo, extracts every Markdown file, chunks and embeds the content, and stores the vectors in Postgres. MCP clients can then run semantic search over the indexed docs. Built in C# / ASP.NET Core with Dapper for data access, PostgreSQL + [pgvector](https://github.com/pgvector/pgvector) for vector similarity search, and OpenRouter for embeddings. An OpenRouter API key is required; the app fails fast at startup if one is not configured.
 
 ## Prerequisites
 
@@ -24,9 +24,8 @@ An MCP (Model Context Protocol) server that indexes the Markdown documentation o
    # edit appsettings.Local.json and set Library:Embedding:ApiKey
    ```
 
-   If you leave the API key empty, the app falls back to an offline, deterministic
-   embedder, which is handy for local development and testing without network access.
-   (`appsettings.Local.json` is git-ignored.)
+   An OpenRouter API key is required. If it is empty, the app fails fast at startup
+   with a clear error. (`appsettings.Local.json` is git-ignored.)
 
 3. Run the app:
 
@@ -82,7 +81,7 @@ ASP.NET Core configuration providers.
 | `ConnectionString`           | Postgres connection string.                                                                    | `Host=localhost;Port=5432;Database=mcp_library;Username=postgres;Password=postgres` |
 | `WorkDirectory`              | Directory where repositories are cloned. Empty string uses a temp directory default.           | `""` (temp dir)                                                                  |
 | `CleanupClones`              | Delete the cloned repo from disk once ingestion finishes.                                       | `true`                                                                            |
-| `Embedding.ApiKey`           | OpenRouter API key. If empty, a deterministic local embedder is used (offline-friendly).        | `""`                                                                             |
+| `Embedding.ApiKey`           | OpenRouter API key. **Required** — the app fails fast at startup if it is empty.                 | `""`                                                                             |
 | `Embedding.BaseUrl`          | Embeddings API base URL.                                                                        | `https://openrouter.ai/api/v1`                                                   |
 | `Embedding.Model`            | Embedding model identifier.                                                                     | `openai/text-embedding-3-small`                                                 |
 | `Embedding.Dimensions`       | Vector dimension for the chosen model (must match the pgvector column size).                    | `1536`                                                                            |

@@ -45,6 +45,17 @@ builder.Services
 
 var app = builder.Build();
 
+// Fail fast if embeddings aren't configured: no key means no ingestion or search.
+{
+    var embedding = app.Services.GetRequiredService<IOptions<LibraryOptions>>().Value.Embedding;
+    if (!embedding.HasApiKey)
+    {
+        app.Logger.LogCritical(
+            "No OpenRouter API key configured. Set Library:Embedding:ApiKey (e.g. in appsettings.Local.json). There is no offline fallback.");
+        throw new InvalidOperationException("Library:Embedding:ApiKey is required.");
+    }
+}
+
 // Apply the schema (and pgvector extension) before serving traffic.
 using (var scope = app.Services.CreateScope())
 {

@@ -24,7 +24,7 @@ public sealed class LibraryOptions
 
 public sealed class EmbeddingOptions
 {
-    /// <summary>OpenRouter API key. If empty, a deterministic local embedder is used (useful for offline testing).</summary>
+    /// <summary>OpenRouter API key. Required; the app fails fast at startup if it is missing.</summary>
     public string ApiKey { get; set; } = "";
 
     public string BaseUrl { get; set; } = "https://openrouter.ai/api/v1";
