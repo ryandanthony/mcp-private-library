@@ -427,3 +427,21 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# --- MCP Private Library (project-specific) ---
+# Local secrets / overrides (copy appsettings.Local.json.example -> appsettings.Local.json)
+src/McpPrivateLibrary/appsettings.Local.json
+**/appsettings.Local.json
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor files
+.idea/
+*.swp
+*~

@@ -1,0 +1,28 @@
+# docker-compose.yml
+# Local Postgres for MCP Private Library.
+# Uses the pgvector image (Postgres 17 + the `vector` extension preinstalled)
+# so the app can store and similarity-search embeddings.
+# Start with: docker compose up -d
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: mcp-library-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mcp_library
+    ports:
+      - "5432:5432"
+    volumes:
+      - mcp-library-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mcp_library"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  mcp-library-db-data:

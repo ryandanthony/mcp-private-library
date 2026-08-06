@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCP Private Library</title>
+  <meta name="description" content="Index GitHub repositories into a private, embeddable document library." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Skip link for keyboard / screen-reader users -->
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <header class="site-header">
+    <div class="container">
+      <h1>MCP Private Library</h1>
+      <p class="tagline">Index a GitHub repository and track its embedding progress.</p>
+    </div>
+  </header>
+
+  <main id="main" class="container">
+    <!-- ============================================================= -->
+    <!-- Submit a new indexing job                                     -->
+    <!-- ============================================================= -->
+    <section class="card" aria-labelledby="submit-heading">
+      <h2 id="submit-heading">Index a repository</h2>
+      <form id="job-form" novalidate>
+        <div class="field">
+          <label for="repo-url">GitHub URL</label>
+          <input
+            type="url"
+            id="repo-url"
+            name="url"
+            placeholder="https://github.com/org/repo"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          />
+        </div>
+        <div class="form-actions">
+          <button type="submit" id="submit-btn" class="btn btn-primary">Submit</button>
+        </div>
+        <!-- Live region announces submission errors to assistive tech -->
+        <p id="form-error" class="error-text" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <!-- ============================================================= -->
+    <!-- Live progress for the job just submitted                      -->
+    <!-- ============================================================= -->
+    <section
+      id="progress-card"
+      class="card"
+      aria-labelledby="progress-heading"
+      aria-live="polite"
+      hidden
+    >
+      <h2 id="progress-heading">Job progress</h2>
+
+      <dl class="progress-meta">
+        <div>
+          <dt>Job ID</dt>
+          <dd id="progress-job-id">&mdash;</dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd><span id="progress-status" class="status-badge">&mdash;</span></dd>
+        </div>
+      </dl>
+
+      <!-- Files progress -->
+      <div class="progress-block">
+        <div class="progress-label">
+          <span>Files processed</span>
+          <span id="files-count" class="mono">0 / 0</span>
+        </div>
+        <div
+          class="progress-bar"
+          role="progressbar"
+          aria-label="Files processed"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+          id="files-bar"
+        >
+          <div class="progress-fill" id="files-fill"></div>
+        </div>
+      </div>
+
+      <!-- Chunks / embeddings progress -->
+      <div class="progress-block">
+        <div class="progress-label">
+          <span>Chunks embedded</span>
+          <span id="chunks-count" class="mono">0 / 0</span>
+        </div>
+        <div
+          class="progress-bar"
+          role="progressbar"
+          aria-label="Chunks embedded"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+          id="chunks-bar"
+        >
+          <div class="progress-fill" id="chunks-fill"></div>
+        </div>
+      </div>
+
+      <p id="progress-error" class="error-text" role="alert" hidden></p>
+    </section>
+
+    <!-- ============================================================= -->
+    <!-- Recent jobs                                                   -->
+    <!-- ============================================================= -->
+    <section class="card" aria-labelledby="jobs-heading">
+      <div class="card-head">
+        <h2 id="jobs-heading">Recent jobs</h2>
+        <button type="button" class="btn btn-ghost" id="refresh-jobs">Refresh</button>
+      </div>
+      <div id="jobs-list" class="list" aria-live="polite">
+        <p class="muted">Loading&hellip;</p>
+      </div>
+    </section>
+
+    <!-- ============================================================= -->
+    <!-- Indexed repositories                                          -->
+    <!-- ============================================================= -->
+    <section class="card" aria-labelledby="repos-heading">
+      <div class="card-head">
+        <h2 id="repos-heading">Indexed repositories</h2>
+        <button type="button" class="btn btn-ghost" id="refresh-repos">Refresh</button>
+      </div>
+      <div id="repos-list" class="list" aria-live="polite">
+        <p class="muted">Loading&hellip;</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p class="muted">MCP Private Library &middot; static UI</p>
+    </div>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "Library": {
+    "ConnectionString": "Host=localhost;Port=5432;Database=mcp_library;Username=postgres;Password=postgres",
+    "WorkDirectory": "",
+    "CleanupClones": true,
+    "Embedding": {
+      "ApiKey": "YOUR_OPENROUTER_KEY",
+      "BaseUrl": "https://openrouter.ai/api/v1",
+      "Model": "openai/text-embedding-3-small",
+      "Dimensions": 1536,
+      "BatchSize": 32
+    },
+    "Chunking": {
+      "MaxChars": 2000,
+      "Overlap": 200
+    }
+  }
+}
