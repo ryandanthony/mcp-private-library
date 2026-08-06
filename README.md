@@ -102,3 +102,44 @@ ASP.NET Core configuration providers.
 | `Embedding.BatchSize`        | Number of chunks sent to the embeddings endpoint per request.                                   | `32`                                                                             |
 | `Chunking.MaxChars`          | Target maximum characters per chunk.                                                            | `2000`                                                                            |
 | `Chunking.Overlap`           | Character overlap between adjacent chunks split from the same section.                          | `200`                                                                            |
+
+## CI/CD and versioning
+
+The project uses **trunk-based development** on `main` with automated semantic
+versioning via [GitVersion](https://gitversion.net/) (config: `GitVersion.yml`).
+Version numbers are tracked with git tags (`vMAJOR.MINOR.PATCH`).
+
+### Workflows
+
+- **`.github/workflows/ci.yml`** (pull requests into `main`): computes the
+  would-be version, restores/builds/publishes the app, and does a Docker build
+  (no push) to catch regressions before merge.
+- **`.github/workflows/release.yml`** (push to `main`, i.e. each merged PR):
+  1. GitVersion computes the next version from the latest tag plus commits.
+  2. Creates and pushes a `vX.Y.Z` git tag.
+  3. Builds a Docker image tagged with the version number and pushes it to GHCR
+     (`ghcr.io/OWNER/REPO:X.Y.Z` and `:latest`).
+  4. Creates a GitHub Release for the tag with generated notes.
+
+The pushed tag is the version source for the next release, so versions increment
+monotonically across merges.
+
+### Bumping the version
+
+Each merge bumps the **patch** version by default. To bump further, include a
+directive in the merge/squash commit message:
+
+- `+semver: minor` (or `+semver: feature`) bumps the minor version
+- `+semver: major` (or `+semver: breaking`) bumps the major version
+- `+semver: none` (or `+semver: skip`) skips the bump
+
+### Pulling the image
+
+```
+docker pull ghcr.io/ryandanthony/mcp-private-library:latest
+docker pull ghcr.io/ryandanthony/mcp-private-library:1.2.3
+```
+
+The runtime image includes `git` (required to clone submitted repositories) and
+records the build version in the `APP_VERSION` env var and the
+`org.opencontainers.image.version` label.

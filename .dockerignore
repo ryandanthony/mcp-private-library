@@ -1,0 +1,16 @@
+# Keep the Docker build context small and deterministic.
+**/bin/
+**/obj/
+**/.vs/
+node_modules/
+.git/
+.github/
+scripts/
+*.md
+!README.md
+appsettings.Local.json
+**/appsettings.Local.json
+.dockerignore
+Dockerfile
+docker-compose.yml
+GitVersion.yml

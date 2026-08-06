@@ -1,0 +1,132 @@
+# Release: runs on every push to the trunk (main), i.e. each merged PR.
+#
+# Trunk-based flow:
+#   1. GitVersion computes the next version from the latest git tag + commits.
+#   2. Create and push a matching git tag (vX.Y.Z) to record the version.
+#   3. Build a Docker image tagged with the version number and push it to GHCR.
+#   4. Create a GitHub Release for the new tag.
+#
+# The pushed tag becomes the version source for the NEXT release, so versions
+# increment monotonically across merges.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Needed to: push tags/releases (contents) and push images to GHCR (packages).
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.gitversion.outputs.majorMinorPatch }}
+    steps:
+      - name: Checkout (full history for GitVersion)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use a token so the tag push re-triggers policies as expected.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v3.2.1
+        with:
+          versionSpec: '6.x'
+
+      - name: Determine version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v3.2.1
+
+      - name: Export version vars
+        id: vars
+        run: |
+          VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing version $VERSION (tag v$VERSION)"
+
+      # Create the git tag for this version. If the tag already exists (e.g. a
+      # re-run), skip tagging and continue so the rest of the pipeline is idempotent.
+      - name: Create and push git tag
+        id: tag
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists locally; skipping create."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists on origin; skipping create."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image name
+        id: image
+        run: echo "name=$(echo '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      # Build once and push with the version tag (primary requirement) plus a
+      # convenience "latest" tag.
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ steps.vars.outputs.version }}
+            ${{ steps.image.outputs.name }}:latest
+          build-args: |
+            VERSION=${{ steps.vars.outputs.version }}
+            INFORMATIONAL_VERSION=${{ steps.gitversion.outputs.informationalVersion }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.vars.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Create the GitHub Release for the tag once the image is published.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: ${{ steps.vars.outputs.tag }}
+          generate_release_notes: true
+          body: |
+            Automated release for `${{ steps.vars.outputs.tag }}`.
+
+            **Docker image**
+            ```
+            docker pull ${{ steps.image.outputs.name }}:${{ steps.vars.outputs.version }}
+            ```
+
+            - Image digest: `${{ steps.build.outputs.digest }}`
+            - Commit: ${{ github.sha }}

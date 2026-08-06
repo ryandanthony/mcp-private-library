@@ -1,0 +1,53 @@
+# GitVersion configuration - trunk-based development.
+# Docs: https://gitversion.net/docs/reference/configuration
+#
+# Model: a single long-lived trunk (main). Every merge to main produces a new
+# release version. Version numbers are derived from git tags (vMAJOR.MINOR.PATCH):
+# GitVersion reads the latest reachable tag and increments from it.
+#
+# - Default increment on main is Patch, so each merge bumps the patch version.
+# - Bump minor/major by including "+semver: minor" / "+semver: major" in a commit
+#   message (merge commit or squash-merge body).
+# - Short-lived feature branches get pre-release labels (e.g. 1.2.3-myfeature.1)
+#   so PR builds have a distinct, non-release version.
+workflow: TrunkBased/preview1
+
+# Tags look like v1.2.3; strip the leading "v" when parsing versions.
+tag-prefix: '[vV]?'
+
+# Fallback base version if no tags exist yet (first release becomes 0.1.0).
+next-version: 0.1.0
+
+branches:
+  main:
+    # Merges to trunk bump the patch by default; message overrides can bump minor/major.
+    increment: Patch
+    # No pre-release label on main => clean release versions like 1.2.3.
+    label: ''
+    regex: ^master$|^main$
+    source-branches: []
+    is-main-branch: true
+
+  feature:
+    increment: Inherit
+    # Pre-release label defaults to the branch name for PR/feature builds.
+    regex: ^(features?|feature)[/-](?<BranchName>.+)
+    source-branches:
+      - main
+
+  pull-request:
+    increment: Inherit
+    label: pr
+    regex: ^(pull|pull\-requests|pr)[/-]
+    source-branches:
+      - main
+
+# Commit-message bumps: put "+semver: minor" or "+semver: major" in a commit
+# (typically the squash-merge/merge commit) to bump beyond the default patch.
+major-version-bump-message: '\+semver:\s?(breaking|major)'
+minor-version-bump-message: '\+semver:\s?(feature|minor)'
+patch-version-bump-message: '\+semver:\s?(fix|patch)'
+no-bump-message: '\+semver:\s?(none|skip)'
+
+# Treat the initial commit as the version root when there is no prior tag.
+merge-message-formats: {}

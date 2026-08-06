@@ -1,0 +1,68 @@
+# CI: validate every pull request targeting the trunk (main).
+# Computes the would-be version with GitVersion (no tag/push), builds and
+# publishes the app, and does a Docker build (without pushing) to catch
+# Dockerfile regressions before merge.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  # Allow manual runs for debugging.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for GitVersion)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v3.2.1
+        with:
+          versionSpec: '6.x'
+
+      - name: Determine version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v3.2.1
+
+      - name: Show computed version
+        run: |
+          echo "PR would build version: ${{ steps.gitversion.outputs.fullSemVer }}"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: >-
+          dotnet build --configuration Release --no-restore
+          -p:Version=${{ steps.gitversion.outputs.assemblySemVer }}
+          -p:InformationalVersion=${{ steps.gitversion.outputs.informationalVersion }}
+
+      - name: Publish (smoke check)
+        run: >-
+          dotnet publish src/McpPrivateLibrary/McpPrivateLibrary.csproj
+          --configuration Release --no-build -o ./publish
+
+      - name: Docker build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          build-args: |
+            VERSION=${{ steps.gitversion.outputs.majorMinorPatch }}
+            INFORMATIONAL_VERSION=${{ steps.gitversion.outputs.informationalVersion }}
