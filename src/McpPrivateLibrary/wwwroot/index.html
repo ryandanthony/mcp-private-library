@@ -4,210 +4,47 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MCP Private Library</title>
-  <meta name="description" content="Index GitHub repositories into a private, embeddable document library." />
+  <meta name="description" content="Index GitHub repositories into a private, semantically searchable document library." />
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="css/repos.css" />
+  <link rel="stylesheet" href="css/search.css" />
 </head>
 <body>
   <!-- Skip link for keyboard / screen-reader users -->
   <a class="skip-link" href="#main">Skip to main content</a>
 
-  <header class="site-header">
-    <div class="container">
-      <h1>MCP Private Library</h1>
-      <p class="tagline">Index a GitHub repository and track its embedding progress.</p>
-    </div>
-  </header>
-
-  <main id="main" class="container">
-    <!-- ============================================================= -->
-    <!-- Find a repository (repo-level search over README embeddings)   -->
-    <!-- ============================================================= -->
-    <section class="card" aria-labelledby="repo-search-heading">
-      <h2 id="repo-search-heading">Find a repository</h2>
-      <p class="muted">Search across indexed repositories by what they do. Pick a result to scope document search below.</p>
-      <form id="repo-search-form" novalidate>
-        <div class="search-controls">
-          <div class="field">
-            <label for="repo-search-query">Query</label>
-            <input
-              type="search"
-              id="repo-search-query"
-              name="query"
-              placeholder="e.g. message bus for .NET, or MCP server SDK"
-              autocomplete="off"
-              required
-            />
-          </div>
-          <div class="form-actions">
-            <button type="submit" id="repo-search-btn" class="btn btn-primary">Find</button>
-          </div>
-        </div>
-        <p id="repo-search-error" class="error-text" role="alert" hidden></p>
-      </form>
-      <div id="repo-search-results" class="search-results" aria-live="polite"></div>
-    </section>
-
-    <!-- ============================================================= -->
-    <!-- Semantic search (mirrors the MCP search_docs tool)            -->
-    <!-- ============================================================= -->
-    <section class="card" aria-labelledby="search-heading">
-      <h2 id="search-heading">Search documentation</h2>
-      <form id="search-form" novalidate>
-        <div class="field">
-          <label for="search-query">Query</label>
-          <input
-            type="search"
-            id="search-query"
-            name="query"
-            placeholder="e.g. how do I create an MCP server with stdio transport?"
-            autocomplete="off"
-            required
-          />
-        </div>
-        <div class="search-controls">
-          <div class="field">
-            <label for="search-repo">Repository</label>
-            <select id="search-repo" name="repositoryId">
-              <option value="">All repositories</option>
-            </select>
-          </div>
-          <div class="field field-narrow">
-            <label for="search-topk">Results</label>
-            <input type="number" id="search-topk" name="topK" value="5" min="1" max="50" />
-          </div>
-          <div class="form-actions">
-            <button type="submit" id="search-btn" class="btn btn-primary">Search</button>
-          </div>
-        </div>
-        <p id="search-error" class="error-text" role="alert" hidden></p>
-      </form>
-
-      <div id="search-results" class="search-results" aria-live="polite"></div>
-    </section>
-
-    <!-- ============================================================= -->
-    <!-- Submit a new indexing job                                     -->
-    <!-- ============================================================= -->
-    <section class="card" aria-labelledby="submit-heading">
-      <h2 id="submit-heading">Index a repository</h2>
-      <form id="job-form" novalidate>
-        <div class="field">
-          <label for="repo-url">GitHub URL</label>
-          <input
-            type="url"
-            id="repo-url"
-            name="url"
-            placeholder="https://github.com/org/repo"
-            autocomplete="off"
-            spellcheck="false"
-            required
-          />
-        </div>
-        <div class="form-actions">
-          <button type="submit" id="submit-btn" class="btn btn-primary">Submit</button>
-        </div>
-        <!-- Live region announces submission errors to assistive tech -->
-        <p id="form-error" class="error-text" role="alert" hidden></p>
-      </form>
-    </section>
-
-    <!-- ============================================================= -->
-    <!-- Live progress for the job just submitted                      -->
-    <!-- ============================================================= -->
-    <section
-      id="progress-card"
-      class="card"
-      aria-labelledby="progress-heading"
-      aria-live="polite"
-      hidden
-    >
-      <h2 id="progress-heading">Job progress</h2>
-
-      <dl class="progress-meta">
-        <div>
-          <dt>Job ID</dt>
-          <dd id="progress-job-id">&mdash;</dd>
-        </div>
-        <div>
-          <dt>Status</dt>
-          <dd><span id="progress-status" class="status-badge">&mdash;</span></dd>
-        </div>
-      </dl>
-
-      <!-- Files progress -->
-      <div class="progress-block">
-        <div class="progress-label">
-          <span>Files processed</span>
-          <span id="files-count" class="mono">0 / 0</span>
-        </div>
-        <div
-          class="progress-bar"
-          role="progressbar"
-          aria-label="Files processed"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-valuenow="0"
-          id="files-bar"
-        >
-          <div class="progress-fill" id="files-fill"></div>
-        </div>
+  <div class="app-shell">
+    <!-- ================= Left navigation ================= -->
+    <aside class="sidebar" aria-label="Primary">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">◆</span>
+        <span class="brand-name">MCP Library</span>
       </div>
+      <nav class="nav">
+        <a class="nav-link" data-nav="home" href="#/home">
+          <span class="nav-ico" aria-hidden="true">＋</span> Index a repo
+        </a>
+        <a class="nav-link" data-nav="repos" href="#/repos">
+          <span class="nav-ico" aria-hidden="true">▤</span> Repositories
+        </a>
+        <a class="nav-link" data-nav="search" href="#/search">
+          <span class="nav-ico" aria-hidden="true">⌕</span> Search
+        </a>
+      </nav>
+    </aside>
 
-      <!-- Chunks / embeddings progress -->
-      <div class="progress-block">
-        <div class="progress-label">
-          <span>Chunks embedded</span>
-          <span id="chunks-count" class="mono">0 / 0</span>
-        </div>
-        <div
-          class="progress-bar"
-          role="progressbar"
-          aria-label="Chunks embedded"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-valuenow="0"
-          id="chunks-bar"
-        >
-          <div class="progress-fill" id="chunks-fill"></div>
-        </div>
-      </div>
+    <!-- ================= Main content ================= -->
+    <main id="main" class="content">
+      <!-- Each screen owns exactly one of these containers. -->
+      <section id="view-home" class="view" hidden></section>
+      <section id="view-repos" class="view" hidden></section>
+      <section id="view-search" class="view" hidden></section>
+    </main>
+  </div>
 
-      <p id="progress-error" class="error-text" role="alert" hidden></p>
-    </section>
-
-    <!-- ============================================================= -->
-    <!-- Recent jobs                                                   -->
-    <!-- ============================================================= -->
-    <section class="card" aria-labelledby="jobs-heading">
-      <div class="card-head">
-        <h2 id="jobs-heading">Recent jobs</h2>
-        <button type="button" class="btn btn-ghost" id="refresh-jobs">Refresh</button>
-      </div>
-      <div id="jobs-list" class="list" aria-live="polite">
-        <p class="muted">Loading&hellip;</p>
-      </div>
-    </section>
-
-    <!-- ============================================================= -->
-    <!-- Indexed repositories                                          -->
-    <!-- ============================================================= -->
-    <section class="card" aria-labelledby="repos-heading">
-      <div class="card-head">
-        <h2 id="repos-heading">Indexed repositories</h2>
-        <button type="button" class="btn btn-ghost" id="refresh-repos">Refresh</button>
-      </div>
-      <div id="repos-list" class="list" aria-live="polite">
-        <p class="muted">Loading&hellip;</p>
-      </div>
-    </section>
-  </main>
-
-  <footer class="site-footer">
-    <div class="container">
-      <p class="muted">MCP Private Library &middot; static UI</p>
-    </div>
-  </footer>
-
-  <script src="app.js" defer></script>
+  <!-- Core shell first (defines window.App + landing screen), then screen modules. -->
+  <script src="js/core.js"></script>
+  <script src="js/repos.js" defer></script>
+  <script src="js/search.js" defer></script>
 </body>
 </html>

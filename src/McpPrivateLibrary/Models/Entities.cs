@@ -89,3 +89,25 @@ public sealed class RepositorySearchResult
     public int Chunks { get; set; }
     public double Score { get; set; }
 }
+
+/// <summary>
+/// One row per indexed repository, merging repo stats with its latest ingestion job so the UI
+/// can render a single line per submitted repo (repos + progress + recent job combined).
+/// </summary>
+public sealed class RepositoryOverview
+{
+    public string Id { get; set; } = "";
+    public string Slug { get; set; } = "";
+    public string Url { get; set; } = "";
+    public int Documents { get; set; }
+    public int Chunks { get; set; }
+    /// <summary>Latest job status, or "None" if the repo has no job.</summary>
+    public string Status { get; set; } = "None";
+    public long? JobId { get; set; }
+    public int FilesTotal { get; set; }
+    public int FilesProcessed { get; set; }
+    public int ChunksTotal { get; set; }
+    public int ChunksEmbedded { get; set; }
+    public string? Error { get; set; }
+    public DateTimeOffset? UpdatedAt { get; set; }
+}

@@ -264,4 +264,34 @@ ORDER BY r.slug;";
         var rows = await conn.QueryAsync<RepositorySearchResult>(new CommandDefinition(sql, cancellationToken: ct));
         return rows.ToList();
     }
+
+    /// <summary>
+    /// One row per repository, merging document/chunk counts with the repository's latest job
+    /// (status + progress). Powers the "Indexed repositories" screen where each submitted repo
+    /// is a single line combining repo stats, progress and the most recent job.
+    /// </summary>
+    public async Task<IReadOnlyList<RepositoryOverview>> GetRepositoryOverviewAsync(CancellationToken ct = default)
+    {
+        const string sql = @"
+SELECT r.id AS Id, r.slug AS Slug, r.url AS Url,
+       (SELECT COUNT(*) FROM documents d WHERE d.repository_id = r.id) AS Documents,
+       (SELECT COUNT(*) FROM chunks c WHERE c.repository_id = r.id) AS Chunks,
+       COALESCE(j.status, 'None') AS Status,
+       j.id AS JobId,
+       COALESCE(j.files_total, 0) AS FilesTotal,
+       COALESCE(j.files_processed, 0) AS FilesProcessed,
+       COALESCE(j.chunks_total, 0) AS ChunksTotal,
+       COALESCE(j.chunks_embedded, 0) AS ChunksEmbedded,
+       j.error AS Error,
+       COALESCE(j.updated_at, r.updated_at) AS UpdatedAt
+FROM repositories r
+LEFT JOIN LATERAL (
+    SELECT id, status, files_total, files_processed, chunks_total, chunks_embedded, error, updated_at
+    FROM jobs jj WHERE jj.repository_id = r.id ORDER BY jj.id DESC LIMIT 1
+) j ON TRUE
+ORDER BY COALESCE(j.updated_at, r.updated_at) DESC, r.slug;";
+        await using var conn = _factory.Create();
+        var rows = await conn.QueryAsync<RepositoryOverview>(new CommandDefinition(sql, cancellationToken: ct));
+        return rows.ToList();
+    }
 }

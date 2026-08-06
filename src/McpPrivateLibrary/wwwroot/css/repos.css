@@ -1,0 +1,231 @@
+/* ==========================================================================
+   MCP Private Library - "Indexed repositories" screen styles.
+
+   Scope: ONLY the #view-repos screen owned by js/repos.js. Everything is
+   namespaced under .repos-screen (rendered inside <section id="view-repos">)
+   so it can't leak into the app shell or other screens.
+
+   Reuses the app's design tokens when present (var(--surface), --border,
+   --text, --muted, --radius, --track, --mono, and the --st-* status colors),
+   with conservative fallbacks so the screen still looks right in isolation.
+   ========================================================================== */
+
+/* Local fallbacks: only take effect if the shell didn't define these tokens.
+   Scoped to the screen root so we never redefine globals for other screens. */
+.repos-screen {
+  --_surface: var(--surface, #ffffff);
+  --_border: var(--border, #e2e5ea);
+  --_text: var(--text, #1c2430);
+  --_muted: var(--muted, #5c6773);
+  --_radius: var(--radius, 10px);
+  --_track: var(--track, #eceef1);
+  --_mono: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas,
+      "Liberation Mono", monospace);
+
+  --_st-queued: var(--st-queued, #6b7280);
+  --_st-active: var(--st-active, #2563eb);
+  --_st-completed: var(--st-completed, #15803d);
+  --_st-failed: var(--st-failed, #b42318);
+  --_error-bg: var(--error-bg, #fef3f2);
+
+  color: var(--_text);
+}
+
+/* --------------------------------------------------------------------------
+   Header row: title + Refresh button
+   -------------------------------------------------------------------------- */
+.repos-screen .repos-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.repos-screen .repos-title {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.25;
+}
+.repos-screen .repos-refresh {
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--primary, #2563eb);
+  background: transparent;
+  border: 1px solid var(--_border);
+  border-radius: var(--_radius);
+  padding: 6px 12px;
+  transition: border-color 0.15s ease;
+}
+.repos-screen .repos-refresh:hover {
+  border-color: var(--primary, #2563eb);
+}
+.repos-screen .repos-refresh:focus-visible {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Inline error + empty state
+   -------------------------------------------------------------------------- */
+.repos-screen .repos-error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  color: var(--error, #b42318);
+  background: var(--_error-bg);
+  border: 1px solid var(--error, #b42318);
+  border-radius: var(--_radius);
+  font-size: 0.92rem;
+}
+.repos-screen .repos-error[hidden] { display: none; }
+
+.repos-screen .repos-empty {
+  margin: 0;
+  color: var(--_muted);
+}
+
+/* --------------------------------------------------------------------------
+   The list + one compact row per repo
+   -------------------------------------------------------------------------- */
+.repos-screen .repos-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.repos-screen .repo-row {
+  display: flex;
+  flex-wrap: wrap;           /* graceful wrapping on narrow screens */
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--_border);
+  border-radius: var(--_radius);
+  background: var(--_surface);
+}
+
+/* Identity: slug link + short mono id. Flexes to take remaining space. */
+.repos-screen .repo-ident {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  flex: 1 1 240px;
+  min-width: 0;              /* allow the slug to truncate instead of overflow */
+}
+.repos-screen .repo-slug {
+  font-weight: 600;
+  color: var(--primary, #2563eb);
+  text-decoration: none;
+  word-break: break-word;
+}
+.repos-screen a.repo-slug:hover { text-decoration: underline; }
+.repos-screen a.repo-slug:focus-visible {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.repos-screen .repo-id {
+  font-family: var(--_mono);
+  font-size: 0.82rem;
+  color: var(--_muted);
+  white-space: nowrap;
+}
+
+/* Status badge, colored by data-state (set from App.badgeState). */
+.repos-screen .repo-badge {
+  flex: 0 0 auto;
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--_st-queued);
+  white-space: nowrap;
+}
+.repos-screen .repo-badge[data-state="queued"]    { background: var(--_st-queued); }
+.repos-screen .repo-badge[data-state="active"]    { background: var(--_st-active); }
+.repos-screen .repo-badge[data-state="completed"] { background: var(--_st-completed); }
+.repos-screen .repo-badge[data-state="failed"]    { background: var(--_st-failed); }
+
+/* Progress cell: holds either a slim bar + counts, doc/chunk counts,
+   or a failure message depending on status. */
+.repos-screen .repo-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+/* Slim inline progress bar. */
+.repos-screen .repo-bar {
+  flex: 1 1 120px;
+  min-width: 90px;
+  max-width: 220px;
+  height: 6px;
+  background: var(--_track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.repos-screen .repo-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--_st-active);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.repos-screen .repo-counts {
+  font-family: var(--_mono);
+  font-size: 0.82rem;
+  color: var(--_muted);
+  white-space: nowrap;
+}
+.repos-screen .repo-counts.muted { font-style: italic; }
+
+/* Failure text: escaped + truncated by JS; ellipsize any overflow here too. */
+.repos-screen .repo-error-text {
+  font-size: 0.85rem;
+  color: var(--error, #b42318);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* Updated timestamp, right-aligned on wide rows. */
+.repos-screen .repo-updated {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--_muted);
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive: stack the pieces on narrow screens
+   -------------------------------------------------------------------------- */
+@media (max-width: 560px) {
+  .repos-screen .repo-row {
+    align-items: flex-start;
+  }
+  .repos-screen .repo-updated {
+    margin-left: 0;          /* no longer push to the far edge when stacked */
+  }
+  .repos-screen .repo-bar {
+    max-width: none;
+  }
+}
+
+/* Respect reduced-motion preferences. */
+@media (prefers-reduced-motion: reduce) {
+  .repos-screen .repo-bar-fill,
+  .repos-screen .repos-refresh {
+    transition: none;
+  }
+}

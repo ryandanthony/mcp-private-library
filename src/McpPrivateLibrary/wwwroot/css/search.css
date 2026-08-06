@@ -1,0 +1,196 @@
+/* ==========================================================================
+   Search screen styles (scoped to #view-search).
+   Styles the two search forms, result cards, score badge, repo summary,
+   and the <pre> content body. Reuses the shared design tokens defined in
+   the base stylesheet, with local fallbacks so this file degrades safely.
+   ========================================================================== */
+
+#view-search {
+  --sr-surface: var(--surface, #ffffff);
+  --sr-border: var(--border, #e2e5ea);
+  --sr-text: var(--text, #1c2430);
+  --sr-muted: var(--muted, #5c6773);
+  --sr-primary: var(--primary, #2563eb);
+  --sr-radius: var(--radius, 10px);
+  --sr-track: var(--track, #eceef1);
+  --sr-mono: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  --sr-accent: var(--st-completed, #15803d);
+}
+
+/* --------------------------------------------------------------------------
+   Section wrappers
+   -------------------------------------------------------------------------- */
+#view-search .search-section {
+  background: var(--sr-surface);
+  border: 1px solid var(--sr-border);
+  border-radius: var(--sr-radius);
+  padding: 20px;
+  margin-bottom: 20px;
+}
+#view-search .search-section h2 {
+  font-size: 1.15rem;
+  margin: 0 0 4px;
+}
+#view-search .search-section > .muted {
+  color: var(--sr-muted);
+  margin: 0 0 12px;
+}
+
+/* --------------------------------------------------------------------------
+   Forms
+   -------------------------------------------------------------------------- */
+#view-search .field { margin: 14px 0; }
+#view-search .field label {
+  display: block;
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+}
+
+#view-search .search-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+#view-search .search-controls .field { margin: 0; flex: 1 1 220px; }
+#view-search .search-controls .field-narrow { flex: 0 0 90px; }
+#view-search .search-controls .form-actions { margin: 0; }
+
+#view-search input[type="search"],
+#view-search input[type="number"],
+#view-search select {
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--sr-text);
+  background: var(--bg, #f6f7f9);
+  border: 1px solid var(--sr-border);
+  border-radius: var(--sr-radius);
+}
+#view-search select { background: var(--sr-surface); }
+#view-search input[type="search"]:focus-visible,
+#view-search input[type="number"]:focus-visible,
+#view-search select:focus-visible {
+  outline: 2px solid var(--sr-primary);
+  outline-offset: 1px;
+  border-color: var(--sr-primary);
+}
+
+#view-search .form-actions { display: flex; gap: 10px; }
+
+/* Alert reuses .error-text from base CSS; hidden attribute already collapses it. */
+#view-search .error-text[hidden] { display: none; }
+
+/* --------------------------------------------------------------------------
+   Results
+   -------------------------------------------------------------------------- */
+#view-search .search-results { margin-top: 8px; }
+#view-search .search-summary { margin: 4px 0 12px; }
+
+#view-search .search-hit {
+  border: 1px solid var(--sr-border);
+  border-radius: var(--sr-radius);
+  padding: 12px 14px;
+  margin: 10px 0;
+  background: var(--sr-surface);
+}
+
+#view-search .search-hit-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+#view-search .search-hit-loc {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+#view-search .search-hit-loc .rank {
+  display: inline-block;
+  min-width: 1.4em;
+  text-align: center;
+  font-weight: 700;
+  color: var(--sr-primary);
+}
+#view-search .repo-hit-slug {
+  color: var(--sr-primary);
+  text-decoration: none;
+  font-weight: 600;
+  word-break: break-word;
+}
+#view-search .repo-hit-slug:hover { text-decoration: underline; }
+#view-search .repo-hit-id,
+#view-search .doc-hit-repoid code {
+  font-family: var(--sr-mono);
+  font-size: 0.85em;
+  color: var(--sr-muted);
+}
+#view-search .doc-hit-title {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+/* Score badge */
+#view-search .score-badge {
+  flex: 0 0 auto;
+  font-family: var(--sr-mono);
+  font-size: 0.8rem;
+  color: var(--sr-accent);
+  background: var(--sr-track);
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* Meta lines */
+#view-search .repo-hit-meta,
+#view-search .doc-hit-heading,
+#view-search .doc-hit-repoid {
+  font-size: 0.85rem;
+  color: var(--sr-muted);
+  margin: 4px 0;
+}
+
+/* Repo summary text */
+#view-search .repo-hit-summary {
+  margin: 8px 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--sr-muted);
+}
+
+/* Repo action button row */
+#view-search .repo-hit-actions { margin-top: 10px; }
+
+/* --------------------------------------------------------------------------
+   Document content body (<pre>)
+   -------------------------------------------------------------------------- */
+#view-search .search-hit-body {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: var(--bg, #f6f7f9);
+  border: 1px solid var(--sr-border);
+  border-radius: 8px;
+  font-family: var(--sr-mono);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive
+   -------------------------------------------------------------------------- */
+@media (max-width: 520px) {
+  #view-search .search-hit-head { flex-direction: column; align-items: flex-start; }
+}

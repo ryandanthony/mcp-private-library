@@ -107,6 +107,29 @@ api.MapGet("/repositories", async (LibraryStore store, CancellationToken ct) =>
     }));
 });
 
+// One line per indexed repository: repo stats merged with its latest job (status + progress).
+// Powers the "Indexed repositories" screen.
+api.MapGet("/repos/overview", async (LibraryStore store, CancellationToken ct) =>
+{
+    var rows = await store.GetRepositoryOverviewAsync(ct);
+    return Results.Ok(rows.Select(r => new
+    {
+        id = r.Id,
+        slug = r.Slug,
+        url = r.Url,
+        documents = r.Documents,
+        chunks = r.Chunks,
+        status = r.Status,
+        jobId = r.JobId,
+        filesTotal = r.FilesTotal,
+        filesProcessed = r.FilesProcessed,
+        chunksTotal = r.ChunksTotal,
+        chunksEmbedded = r.ChunksEmbedded,
+        error = r.Error,
+        updatedAt = r.UpdatedAt
+    }));
+});
+
 // Repository-level semantic search (find a repo/tool by its README embedding).
 api.MapPost("/repositories/search", async (RepoSearchRequest req, IEmbeddingService embeddings, LibraryStore store, CancellationToken ct) =>
 {
