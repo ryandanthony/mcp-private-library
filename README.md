@@ -56,6 +56,60 @@ An MCP (Model Context Protocol) server that indexes the Markdown documentation o
 | GET    | `/api/repositories`        | List indexed repositories (each with its hash `id`, slug and counts).   |
 | POST   | `/api/repositories/search` | Repository-level search: find a repo/tool by its README. `{query,topK}`.|
 | POST   | `/api/search`              | Document search. Narrow to one repo with `repositoryId`. `{query,topK,repositoryId}`. |
+| GET    | `/api/keys`                | List your API keys (never returns the secret).                          |
+| POST   | `/api/keys`                | Create an API key. `{name, expiresInDays?}`. Returns the token **once**.|
+| DELETE | `/api/keys/{id}`           | Revoke one of your API keys. Takes effect immediately.                  |
+
+## Authentication
+
+Two credentials are accepted, and they work side by side on both `/api` and `/mcp`. The
+`Authorization` header's scheme decides which one is used, so neither can shadow the other:
+
+| Caller                        | Header                              |
+| ----------------------------- | ----------------------------------- |
+| Browser UI                    | cookie session (OIDC login)         |
+| OAuth-capable MCP client      | `Authorization: Bearer <jwt>`       |
+| Scripts, CLIs, MCP hosts      | `Authorization: ApiKey <token>`     |
+
+### API keys
+
+API keys exist for clients that can't run an OAuth authorization-code flow. Each key is
+**scoped to the user who created it** and acts entirely as that user.
+
+Create and revoke them under **API keys** in the web UI, or via `/api/keys`. A key looks like:
+
+```
+mcpl_<keyId>_<secret>
+```
+
+Use it like this:
+
+```bash
+curl -H "Authorization: ApiKey mcpl_ab12cd34ef56gh78_xxxxxxxx" \
+     https://library.ants.zone/api/repositories
+```
+
+Or in an MCP client config:
+
+```json
+{
+  "mcp-private-library": {
+    "type": "http",
+    "url": "https://library.ants.zone/mcp",
+    "headers": { "Authorization": "ApiKey mcpl_ab12cd34ef56gh78_xxxxxxxx" }
+  }
+}
+```
+
+Notes:
+
+- The token is shown **once**, at creation. Only a SHA-256 hash is stored, so a lost token
+  can't be recovered — create a new key instead.
+- Revocation is immediate: validity is checked against the database on every request, so
+  there's no window where a revoked key still works.
+- Keys can optionally expire (`expiresInDays`); otherwise they last until revoked.
+- **An API key cannot manage API keys.** `/api/keys` requires an interactive login (cookie or
+  bearer token). If a leaked key could mint more keys, revoking it wouldn't end the compromise.
 
 ### Repository IDs
 
@@ -71,6 +125,11 @@ parsing, chunking, embedding, done, or failed) along with per-file progress coun
 
 The MCP server is exposed at `/mcp` over the Streamable HTTP transport. Point an
 MCP client at `http://localhost:5171/mcp`.
+
+Authenticate with either an OAuth bearer token or an API key (see
+[Authentication](#authentication)). Clients that support OAuth can discover the
+authorization server from the `WWW-Authenticate` header on an unauthenticated request
+(RFC 9728); simpler clients should send `Authorization: ApiKey <token>`.
 
 Available tools:
 

@@ -78,6 +78,46 @@ public sealed class JobCreationResult
     public static JobCreationResult TooRecent(DateTimeOffset lastIndexedAt) => new() { Outcome = JobCreationOutcome.TooRecent, LastIndexedAt = lastIndexedAt };
 }
 
+/// <summary>
+/// A long-lived, user-scoped credential for non-interactive callers (MCP hosts, CLIs, scripts)
+/// that can't run an OAuth authorization-code flow. Presented as
+/// <c>Authorization: ApiKey mcpl_&lt;KeyId&gt;_&lt;secret&gt;</c>.
+///
+/// Only the SHA-256 of the secret half is persisted (<see cref="SecretHash"/>); the plaintext is
+/// returned exactly once at creation and is unrecoverable afterwards. <see cref="KeyId"/> is the
+/// public, non-secret half: it's what the lookup indexes on, so verification is a single indexed
+/// read plus one constant-time hash comparison rather than a scan-and-compare over every key.
+/// </summary>
+public sealed class ApiKey
+{
+    public long Id { get; set; }
+    /// <summary>Public identifier embedded in the token; used to look the key up. Not a secret.</summary>
+    public string KeyId { get; set; } = "";
+    /// <summary>Base64 SHA-256 of the secret half of the token.</summary>
+    public string SecretHash { get; set; } = "";
+    /// <summary>Owning user's stable IdP subject claim (`sub`). Keys are scoped per user.</summary>
+    public string OwnerSubject { get; set; } = "";
+    /// <summary>Display name of the owner at creation time, for showing in the UI/audit.</summary>
+    public string? OwnerName { get; set; }
+    /// <summary>User-supplied label, e.g. "jcode laptop".</summary>
+    public string Name { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; }
+    /// <summary>Optional hard expiry. Null means the key lives until revoked.</summary>
+    public DateTimeOffset? ExpiresAt { get; set; }
+    /// <summary>
+    /// Coarse last-use timestamp for spotting stale keys. Written opportunistically (at most once
+    /// per <see cref="Auth.ApiKeyAuthenticationHandler"/> throttle window) so a busy key doesn't
+    /// turn every authenticated request into a database write.
+    /// </summary>
+    public DateTimeOffset? LastUsedAt { get; set; }
+    /// <summary>Set when the user revokes the key. Revoked keys are kept for audit, never deleted.</summary>
+    public DateTimeOffset? RevokedAt { get; set; }
+
+    public bool IsRevoked => RevokedAt is not null;
+    public bool IsExpired => ExpiresAt is not null && ExpiresAt <= DateTimeOffset.UtcNow;
+    public bool IsActive => !IsRevoked && !IsExpired;
+}
+
 public sealed class Document
 {
     public long Id { get; set; }

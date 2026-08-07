@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="css/repos.css" />
   <link rel="stylesheet" href="css/search.css" />
+  <link rel="stylesheet" href="css/keys.css" />
 </head>
 <body>
   <!-- Skip link for keyboard / screen-reader users -->
@@ -30,6 +31,9 @@
         <a class="nav-link" data-nav="search" href="#/search">
           <span class="nav-ico" aria-hidden="true">⌕</span> Search
         </a>
+        <a class="nav-link" data-nav="keys" href="#/keys">
+          <span class="nav-ico" aria-hidden="true">⚿</span> API keys
+        </a>
       </nav>
       <div id="auth-bar" class="auth-bar" aria-live="polite"></div>
     </aside>
@@ -40,6 +44,7 @@
       <section id="view-home" class="view" hidden></section>
       <section id="view-repos" class="view" hidden></section>
       <section id="view-search" class="view" hidden></section>
+      <section id="view-keys" class="view" hidden></section>
     </main>
   </div>
 
@@ -47,5 +52,6 @@
   <script src="js/core.js"></script>
   <script src="js/repos.js" defer></script>
   <script src="js/search.js" defer></script>
+  <script src="js/keys.js" defer></script>
 </body>
 </html>

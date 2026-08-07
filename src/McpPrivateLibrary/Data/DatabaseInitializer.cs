@@ -106,6 +106,25 @@ CREATE INDEX IF NOT EXISTS ix_chunks_document ON chunks (document_id);
 CREATE INDEX IF NOT EXISTS ix_chunks_repo ON chunks (repository_id);
 CREATE INDEX IF NOT EXISTS ix_chunks_repo_gen ON chunks (repository_id, generation);
 CREATE INDEX IF NOT EXISTS ix_documents_repo_gen ON documents (repository_id, generation);
+
+-- User-scoped API keys for non-interactive callers (MCP hosts, CLIs) that can't run an
+-- OAuth code flow. Only the SHA-256 of the secret half is stored; `key_id` is the public
+-- half embedded in the presented token, so authentication is one indexed lookup rather
+-- than a scan over every row. Revoked keys are retained (revoked_at set) for audit.
+CREATE TABLE IF NOT EXISTS api_keys (
+    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key_id         TEXT NOT NULL,
+    secret_hash    TEXT NOT NULL,
+    owner_subject  TEXT NOT NULL,
+    owner_name     TEXT NULL,
+    name           TEXT NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at     TIMESTAMPTZ NULL,
+    last_used_at   TIMESTAMPTZ NULL,
+    revoked_at     TIMESTAMPTZ NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_api_keys_key_id ON api_keys (key_id);
+CREATE INDEX IF NOT EXISTS ix_api_keys_owner ON api_keys (owner_subject);
 ");
 
         await conn.ExecuteAsync(sql.ToString());

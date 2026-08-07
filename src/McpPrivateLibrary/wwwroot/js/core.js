@@ -106,7 +106,7 @@
   // ---- View registry + hash router ---------------------------------------
 
   // name -> { container, handlers: [fn], built: bool }
-  var VIEW_NAMES = ["home", "repos", "search"];
+  var VIEW_NAMES = ["home", "repos", "search", "keys"];
   var views = {};
   var currentView = null;
 
@@ -301,6 +301,7 @@
     ensureView("home").container = document.getElementById("view-home");
     ensureView("repos").container = document.getElementById("view-repos");
     ensureView("search").container = document.getElementById("view-search");
+    ensureView("keys").container = document.getElementById("view-keys");
 
     requireAuthOrRedirect().then(renderAuthBar);
 

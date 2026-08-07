@@ -1,3 +1,4 @@
+using McpPrivateLibrary.Auth;
 using McpPrivateLibrary.Configuration;
 using McpPrivateLibrary.Data;
 using McpPrivateLibrary.Ingestion;
@@ -73,17 +74,29 @@ if (authOptions.Enabled)
             options.DefaultScheme = "Smart";
             options.DefaultSignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
         })
-        // Chooses Bearer (-> MCP RFC 9728 challenge) for API/MCP callers that send an
-        // Authorization header, Cookie for browser navigations/fetches that don't.
-        // Applies uniformly to authenticate AND challenge, so /api and /mcp both "just
-        // work" for either kind of caller without per-endpoint scheme wiring.
-        .AddPolicyScheme("Smart", "Bearer or Cookie", options =>
+        // Chooses ApiKey / Bearer (-> MCP RFC 9728 challenge) / Cookie per request. The two
+        // Authorization-header credentials are told apart by their scheme token, so an API key and
+        // a Keycloak JWT can coexist on the same endpoints without either shadowing the other.
+        // Browser navigations (no Authorization header) fall through to the cookie session.
+        .AddPolicyScheme("Smart", "ApiKey, Bearer or Cookie", options =>
         {
             options.ForwardDefaultSelector = context =>
-                context.Request.Headers.Authorization.Count > 0
-                    ? McpAuthenticationDefaults.AuthenticationScheme
-                    : CookieAuthenticationDefaults.AuthenticationScheme;
+                SelectScheme(context, McpAuthenticationDefaults.AuthenticationScheme);
         })
+        // Same idea as "Smart", but the fallback for a request with no (or an unrecognised)
+        // Authorization header is the MCP/Bearer scheme rather than the cookie scheme. MCP clients
+        // probe unauthenticated first and depend on the resulting 401's
+        // `WWW-Authenticate: Bearer resource_metadata="..."` to discover how to log in; routing
+        // those probes to Cookie instead would swallow that header. Layering it on top of the same
+        // selector keeps API keys working on /mcp without disturbing OAuth discovery.
+        .AddPolicyScheme("McpSmart", "ApiKey or MCP Bearer", options =>
+        {
+            options.ForwardDefaultSelector = context =>
+                SelectScheme(context, McpAuthenticationDefaults.AuthenticationScheme, fallbackToCookie: false);
+        })
+        // Database-backed, user-scoped API keys for non-interactive clients.
+        .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(
+            ApiKeyToken.Scheme, _ => { })
         .AddJwtBearer(options =>
         {
             options.Authority = authOptions.Authority;
@@ -378,21 +391,127 @@ api.MapPost("/search", async (SearchRequest req, IEmbeddingService embeddings, L
     });
 });
 
+// ---- API keys ---------------------------------------------------------------
+// Long-lived credentials for MCP hosts/CLIs that can't run an OAuth code flow, scoped to the
+// creating user. Managed under /api/keys, but deliberately NOT usable via an API key: minting is
+// restricted to an interactive login (cookie session or Keycloak bearer token). If a key could
+// mint more keys, revoking a leaked one wouldn't actually end the compromise -- the attacker would
+// already have issued replacements. Requiring a real login makes revocation final.
+if (authOptions.Enabled)
+{
+    var keys = app.MapGroup("/api/keys").RequireAuthorization(policy => policy
+        .AddAuthenticationSchemes(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            McpAuthenticationDefaults.AuthenticationScheme)
+        .RequireAuthenticatedUser());
+
+    keys.MapGet("/", async (ClaimsPrincipal user, LibraryStore store, CancellationToken ct) =>
+    {
+        var subject = Subject(user);
+        if (subject is null) return Results.Unauthorized();
+
+        var rows = await store.ListApiKeysAsync(subject, ct);
+        return Results.Ok(rows.Select(ToApiKeyDto));
+    });
+
+    keys.MapPost("/", async (CreateApiKeyRequest? req, ClaimsPrincipal user, LibraryStore store, CancellationToken ct) =>
+    {
+        var subject = Subject(user);
+        if (subject is null) return Results.Unauthorized();
+
+        var name = req?.Name?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return Results.BadRequest(new { error = "A name is required so you can tell your keys apart." });
+        if (name.Length > 100)
+            return Results.BadRequest(new { error = "Name must be 100 characters or fewer." });
+
+        DateTimeOffset? expiresAt = null;
+        if (req?.ExpiresInDays is { } days)
+        {
+            if (days is < 1 or > 3650)
+                return Results.BadRequest(new { error = "Expiry must be between 1 and 3650 days." });
+            expiresAt = DateTimeOffset.UtcNow.AddDays(days);
+        }
+
+        var generated = ApiKeyToken.Generate();
+        var created = await store.CreateApiKeyAsync(new ApiKey
+        {
+            KeyId = generated.KeyId,
+            SecretHash = generated.SecretHash,
+            OwnerSubject = subject,
+            OwnerName = user.Identity?.Name,
+            Name = name,
+            ExpiresAt = expiresAt,
+        }, ct);
+
+        // The only time the plaintext token exists outside the caller's hands. It is not stored
+        // and cannot be recovered; losing it means creating a new key.
+        return Results.Created($"/api/keys/{created.Id}", new
+        {
+            key = ToApiKeyDto(created),
+            token = generated.Token,
+            authorizationHeader = $"{ApiKeyToken.Scheme} {generated.Token}",
+            warning = "Copy this token now. It is hashed on the server and cannot be shown again."
+        });
+    });
+
+    // Revocation takes effect on the very next request: the auth handler reads revoked_at on each
+    // authentication rather than caching validity, so there is no window where a revoked key still
+    // works. 404 (not 403) for someone else's key id, so ids aren't probeable across accounts.
+    keys.MapDelete("/{id:long}", async (long id, ClaimsPrincipal user, LibraryStore store, CancellationToken ct) =>
+    {
+        var subject = Subject(user);
+        if (subject is null) return Results.Unauthorized();
+
+        var revoked = await store.RevokeApiKeyAsync(id, subject, ct);
+        return revoked
+            ? Results.Ok(new { id, revoked = true })
+            : Results.NotFound(new { error = "API key not found." });
+    });
+}
+
 // ---- MCP endpoint -----------------------------------------------------------
 var mcp = app.MapMcp("/mcp");
 if (authOptions.Enabled)
 {
-    // Force the McpAuth scheme specifically (not the header-sniffing "Smart" scheme
-    // used by /api): MCP clients probe with no Authorization header on their first
+    // Force the MCP-flavoured policy scheme specifically (not the browser-oriented "Smart"
+    // scheme used by /api): MCP clients probe with no Authorization header on their first
     // request and rely on the 401's WWW-Authenticate: Bearer resource_metadata="..."
     // header to discover how to authenticate. Under "Smart", a header-less request
-    // would route to the Cookie scheme instead and never receive that header.
+    // would route to the Cookie scheme instead and never receive that header. "McpSmart"
+    // keeps that behaviour while still accepting `Authorization: ApiKey ...`.
     mcp.RequireAuthorization(policy => policy
-        .AddAuthenticationSchemes(McpAuthenticationDefaults.AuthenticationScheme)
+        .AddAuthenticationSchemes("McpSmart")
         .RequireAuthenticatedUser());
 }
 
 app.Run();
+
+/// <summary>
+/// Picks the authentication scheme for a request by looking at the `Authorization` header's
+/// scheme token. This is what lets API keys and Keycloak bearer tokens coexist: each credential
+/// names its own handler on the wire, so neither has to guess at, or fall through, the other.
+/// A request with no Authorization header is a browser navigation (cookie session) on /api, or an
+/// MCP discovery probe (which must reach the Bearer challenge) on /mcp.
+/// </summary>
+static string SelectScheme(HttpContext context, string bearerScheme, bool fallbackToCookie = true)
+{
+    foreach (var value in context.Request.Headers.Authorization)
+    {
+        if (string.IsNullOrWhiteSpace(value)) continue;
+        if (value.StartsWith(ApiKeyToken.Scheme + " ", StringComparison.OrdinalIgnoreCase))
+            return ApiKeyToken.Scheme;
+        if (value.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return bearerScheme;
+    }
+
+    // An Authorization header we don't recognise still isn't a cookie session; hand it to the
+    // bearer handler so the caller gets a credential-shaped 401 rather than a silent redirect.
+    if (context.Request.Headers.Authorization.Count > 0)
+        return bearerScheme;
+
+    return fallbackToCookie ? CookieAuthenticationDefaults.AuthenticationScheme : bearerScheme;
+}
 
 static object ToDto(Job j) => new
 {
@@ -429,7 +548,41 @@ static string? Snippet(string? text, int max)
     return collapsed.Length <= max ? collapsed : collapsed[..max].TrimEnd() + "…";
 }
 
+/// <summary>
+/// The user's stable identifier. Prefers the IdP `sub` claim over the username or email, both of
+/// which a user can change -- a rename must not orphan their existing keys or silently hand them
+/// to whoever claims the old name next.
+/// </summary>
+static string? Subject(ClaimsPrincipal user)
+{
+    var sub = user.FindFirstValue("sub") ?? user.FindFirstValue(ClaimTypes.NameIdentifier);
+    return string.IsNullOrWhiteSpace(sub) ? null : sub;
+}
+
+/// <summary>
+/// Public projection of an API key. Never includes the secret or its hash: only the non-secret
+/// prefix, which is enough to match a row against a configured client but useless as a credential.
+/// </summary>
+static object ToApiKeyDto(ApiKey k) => new
+{
+    id = k.Id,
+    name = k.Name,
+    prefix = ApiKeyToken.DisplayPrefix(k.KeyId),
+    createdAt = k.CreatedAt,
+    expiresAt = k.ExpiresAt,
+    lastUsedAt = k.LastUsedAt,
+    revokedAt = k.RevokedAt,
+    active = k.IsActive,
+    status = k.IsRevoked ? "Revoked" : k.IsExpired ? "Expired" : "Active",
+};
+
 public sealed record SubmitRequest(string Url);
+
+/// <summary>
+/// Request body for minting an API key. <c>ExpiresInDays</c> is optional; omitting it creates a
+/// key that lives until explicitly revoked.
+/// </summary>
+public sealed record CreateApiKeyRequest(string? Name, int? ExpiresInDays);
 
 public sealed record SearchRequest(string Query, int? TopK, string? RepositoryId);
 

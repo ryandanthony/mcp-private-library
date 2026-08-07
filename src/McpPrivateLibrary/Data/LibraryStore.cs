@@ -418,4 +418,72 @@ ORDER BY COALESCE(j.updated_at, r.updated_at) DESC, r.slug;";
     {
         public DateTimeOffset? LastIndexedAt { get; set; }
     }
+
+    // ---- API keys ---------------------------------------------------------
+    //
+    // Keys are scoped to a user by their IdP subject (`sub`), which is stable across username
+    // and email changes. Every read below is filtered by owner so one user can never see or
+    // revoke another's keys, even given a guessed id.
+
+    private const string ApiKeyColumns = @"
+       id, key_id AS KeyId, secret_hash AS SecretHash, owner_subject AS OwnerSubject,
+       owner_name AS OwnerName, name, created_at AS CreatedAt, expires_at AS ExpiresAt,
+       last_used_at AS LastUsedAt, revoked_at AS RevokedAt";
+
+    public async Task<ApiKey> CreateApiKeyAsync(ApiKey key, CancellationToken ct = default)
+    {
+        var sql = $@"
+INSERT INTO api_keys (key_id, secret_hash, owner_subject, owner_name, name, expires_at)
+VALUES (@KeyId, @SecretHash, @OwnerSubject, @OwnerName, @Name, @ExpiresAt)
+RETURNING {ApiKeyColumns};";
+        await using var conn = _factory.Create();
+        return await conn.QuerySingleAsync<ApiKey>(new CommandDefinition(sql, key, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// Looks a key up by its public id for authentication. Returns revoked/expired keys too;
+    /// the caller decides (and must still verify the secret hash) so it can distinguish
+    /// "unknown key" from "revoked key" when logging.
+    /// </summary>
+    public async Task<ApiKey?> FindApiKeyByKeyIdAsync(string keyId, CancellationToken ct = default)
+    {
+        var sql = $"SELECT {ApiKeyColumns} FROM api_keys WHERE key_id = @KeyId;";
+        await using var conn = _factory.Create();
+        return await conn.QuerySingleOrDefaultAsync<ApiKey>(
+            new CommandDefinition(sql, new { KeyId = keyId }, cancellationToken: ct));
+    }
+
+    /// <summary>All of one user's keys, newest first. Includes revoked ones so the UI can show history.</summary>
+    public async Task<IReadOnlyList<ApiKey>> ListApiKeysAsync(string ownerSubject, CancellationToken ct = default)
+    {
+        var sql = $@"
+SELECT {ApiKeyColumns} FROM api_keys
+WHERE owner_subject = @Owner
+ORDER BY revoked_at IS NOT NULL, created_at DESC;";
+        await using var conn = _factory.Create();
+        var rows = await conn.QueryAsync<ApiKey>(new CommandDefinition(sql, new { Owner = ownerSubject }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
+    /// <summary>
+    /// Revokes one of <paramref name="ownerSubject"/>'s keys. Idempotent: re-revoking keeps the
+    /// original timestamp. Returns false when the key doesn't exist or belongs to someone else,
+    /// which the endpoint surfaces as a 404 so key ids aren't probeable across accounts.
+    /// </summary>
+    public async Task<bool> RevokeApiKeyAsync(long id, string ownerSubject, CancellationToken ct = default)
+    {
+        const string sql = @"
+UPDATE api_keys SET revoked_at = COALESCE(revoked_at, now())
+WHERE id = @Id AND owner_subject = @Owner;";
+        await using var conn = _factory.Create();
+        return await conn.ExecuteAsync(new CommandDefinition(sql, new { Id = id, Owner = ownerSubject }, cancellationToken: ct)) > 0;
+    }
+
+    /// <summary>Records a coarse last-use timestamp. Best-effort; never blocks authentication.</summary>
+    public async Task TouchApiKeyAsync(long id, CancellationToken ct = default)
+    {
+        const string sql = "UPDATE api_keys SET last_used_at = now() WHERE id = @Id;";
+        await using var conn = _factory.Create();
+        await conn.ExecuteAsync(new CommandDefinition(sql, new { Id = id }, cancellationToken: ct));
+    }
 }
