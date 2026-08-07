@@ -29,7 +29,7 @@ function makeEl(tag) {
 }
 
 const els = {};
-['view-home','view-repos','view-search'].forEach(id => { els[id] = makeEl('section'); });
+['view-home','view-repos','view-search','view-keys'].forEach(id => { els[id] = makeEl('section'); });
 
 global.window = {
   location: { hash: '' },
@@ -63,15 +63,16 @@ try {
 
   load('js/repos.js');
   load('js/search.js');
+  load('js/keys.js');
 
   // Drive the router: activate each view; handlers should run without throwing.
-  ['home','repos','search'].forEach(name => {
+  ['home','repos','search','keys'].forEach(name => {
     global.window.location.hash = '#/' + name;
     // core.js registers hashchange on window.addEventListener (noop here), so call navigate:
     api.navigate(name);
   });
 
-  console.log('OK: core + repos + search loaded; views registered:', Object.keys(api.views).join(', '));
+  console.log('OK: core + repos + search + keys loaded; views registered:', Object.keys(api.views).join(', '));
 } catch (e) {
   ok = false;
   console.error('FAIL:', e.message);
