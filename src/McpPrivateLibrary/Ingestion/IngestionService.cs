@@ -42,6 +42,15 @@ public sealed class IngestionService
             : _options.WorkDirectory;
         var dest = Path.Combine(workRoot, job.RepositoryId.ToString(), "repo");
 
+        // Each job builds its documents/chunks under a brand-new generation (the job's own id,
+        // which is unique and monotonic) rather than clearing the repo's current content first.
+        // The previous generation stays fully live and searchable for the entire clone/chunk/embed
+        // run; only SwapGenerationAsync (called once everything below succeeds) atomically drops
+        // it and activates this one. A failure at any point before that leaves the repo's existing
+        // index completely untouched -- no partial/empty-index window, ever.
+        var generation = job.Id;
+        var swapped = false;
+
         try
         {
             if (!GitHubUrlParser.TryParse(job.Url, out var repoRef, out var parseError))
@@ -52,9 +61,6 @@ public sealed class IngestionService
             await _store.UpdateJobProgressAsync(job, ct);
             var clone = await _git.CloneAsync(repoRef.CloneUrl, dest, ct);
             await _store.UpdateRepositoryCommitAsync(job.RepositoryId, clone.Branch, clone.CommitSha, ct);
-
-            // Re-ingest cleanly: drop prior documents/chunks for this repo.
-            await _store.ClearRepositoryContentAsync(job.RepositoryId, ct);
 
             // 2. Discover
             job.Status = JobStatus.Discovering;
@@ -69,12 +75,16 @@ public sealed class IngestionService
 
             if (files.Count == 0)
             {
+                // Nothing to index: still swap so a reindex of a now-empty repo actually clears
+                // out whatever the previous generation had (e.g. all docs were deleted upstream).
+                await _store.SwapGenerationAsync(job.RepositoryId, generation, ct);
+                swapped = true;
                 job.Status = JobStatus.Completed;
                 await _store.UpdateJobProgressAsync(job, ct);
                 return;
             }
 
-            // 3. Chunk + persist documents/chunks
+            // 3. Chunk + persist documents/chunks (into the new generation)
             job.Status = JobStatus.Chunking;
             await _store.UpdateJobProgressAsync(job, ct);
 
@@ -99,7 +109,8 @@ public sealed class IngestionService
                     RepositoryId = job.RepositoryId,
                     Path = file.RelativePath,
                     Title = MarkdownProcessor.ExtractTitle(content),
-                    ContentHash = MarkdownProcessor.ComputeHash(content)
+                    ContentHash = MarkdownProcessor.ComputeHash(content),
+                    Generation = generation
                 };
                 var docId = await _store.InsertDocumentAsync(doc, ct);
 
@@ -110,6 +121,7 @@ public sealed class IngestionService
                     {
                         DocumentId = docId,
                         RepositoryId = job.RepositoryId,
+                        Generation = generation,
                         Ordinal = chunk.Ordinal,
                         HeadingPath = chunk.HeadingPath,
                         Content = chunk.Content,
@@ -122,13 +134,18 @@ public sealed class IngestionService
                 await _store.UpdateJobProgressAsync(job, ct);
             }
 
-            // 4. Embed all chunks that still need vectors, in batches.
+            // 4. Embed all chunks in the new generation, in batches.
             job.Status = JobStatus.Embedding;
             await _store.UpdateJobProgressAsync(job, ct);
-            await EmbedPendingAsync(job, ct);
+            await EmbedPendingAsync(job, generation, ct);
 
             // 5. Embed the root README as a repo-level vector so the repo itself is searchable.
             await EmbedRepositoryReadmeAsync(job, clone.LocalPath, files, ct);
+
+            // 6. Everything for the new generation is fully built: atomically make it live and
+            // drop the old one. This is the only write that ever removes previously-live content.
+            await _store.SwapGenerationAsync(job.RepositoryId, generation, ct);
+            swapped = true;
 
             job.Status = JobStatus.Completed;
             await _store.UpdateJobProgressAsync(job, ct);
@@ -148,6 +165,15 @@ public sealed class IngestionService
         }
         finally
         {
+            // Failed (or cancelled) before the swap: clean up the incomplete generation so it
+            // doesn't linger as orphaned rows. The previously-live generation (if any) was never
+            // touched and keeps serving search/MCP queries throughout.
+            if (!swapped)
+            {
+                try { await _store.AbandonGenerationAsync(job.RepositoryId, generation, CancellationToken.None); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Job {JobId}: failed to clean up abandoned generation {Gen}", job.Id, generation); }
+            }
+
             if (_options.CleanupClones)
             {
                 try { GitCloneService.DeleteDirectory(dest); }
@@ -156,13 +182,13 @@ public sealed class IngestionService
         }
     }
 
-    private async Task EmbedPendingAsync(Job job, CancellationToken ct)
+    private async Task EmbedPendingAsync(Job job, long generation, CancellationToken ct)
     {
         var batchSize = _options.Embedding.BatchSize;
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            var batch = await _store.GetChunksMissingEmbeddingsAsync(job.RepositoryId, batchSize, ct);
+            var batch = await _store.GetChunksMissingEmbeddingsAsync(job.RepositoryId, generation, batchSize, ct);
             if (batch.Count == 0) break;
 
             var vectors = await _embeddings.EmbedAsync(batch.Select(c => c.Content).ToList(), ct);

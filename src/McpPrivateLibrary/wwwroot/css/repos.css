@@ -207,6 +207,52 @@
   white-space: nowrap;
 }
 
+/* "Last indexed" cell: label + timestamp stacked, distinct from the generic
+   "updated" (job progress) timestamp. */
+.repos-screen .repo-last-indexed {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  font-size: 0.8rem;
+  color: var(--_muted);
+  white-space: nowrap;
+}
+.repos-screen .repo-last-indexed-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+}
+
+/* Reindex action. */
+.repos-screen .repo-reindex {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--primary, #2563eb);
+  background: transparent;
+  border: 1px solid var(--_border);
+  border-radius: var(--_radius);
+  padding: 5px 10px;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, opacity 0.15s ease;
+}
+.repos-screen .repo-reindex:hover:not(:disabled) {
+  border-color: var(--primary, #2563eb);
+}
+.repos-screen .repo-reindex:focus-visible {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 2px;
+}
+.repos-screen .repo-reindex:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 /* --------------------------------------------------------------------------
    Responsive: stack the pieces on narrow screens
    -------------------------------------------------------------------------- */

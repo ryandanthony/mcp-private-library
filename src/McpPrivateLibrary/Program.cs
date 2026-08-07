@@ -267,6 +267,23 @@ api.MapGet("/jobs/{id:long}", async (long id, LibraryStore store, CancellationTo
     return job is null ? Results.NotFound(new { error = "Job not found." }) : Results.Ok(ToDto(job));
 });
 
+// Reindex an already-submitted repository: re-runs the same clone -> chunk -> embed pipeline
+// against a fresh generation, then atomically swaps it in for the old one (see LibraryStore's
+// SwapGenerationAsync / IngestionService). The current index stays fully live and searchable
+// for the entire duration; nothing is cleared upfront.
+api.MapPost("/repositories/{id}/reindex", async (string id, LibraryStore store, IJobSubmitter submitter, CancellationToken ct) =>
+{
+    var repo = await store.GetRepositoryAsync(id, ct);
+    if (repo is null)
+        return Results.NotFound(new { error = "Repository not found." });
+
+    var result = await submitter.SubmitAsync(repo.Url, ct);
+    if (result.Status == JobStatus.Failed)
+        return Results.BadRequest(new { error = result.Message });
+
+    return Results.Ok(new { jobId = result.JobId, status = result.Status.ToString(), message = result.Message });
+});
+
 api.MapGet("/repositories", async (LibraryStore store, CancellationToken ct) =>
 {
     var repos = await store.ListRepositoriesAsync(ct);
@@ -300,7 +317,8 @@ api.MapGet("/repos/overview", async (LibraryStore store, CancellationToken ct) =
         chunksTotal = r.ChunksTotal,
         chunksEmbedded = r.ChunksEmbedded,
         error = r.Error,
-        updatedAt = r.UpdatedAt
+        updatedAt = r.UpdatedAt,
+        lastIndexedAt = r.LastIndexedAt
     }));
 });
 

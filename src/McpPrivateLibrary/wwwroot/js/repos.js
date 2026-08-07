@@ -119,6 +119,54 @@
         start(container);
       });
     }
+
+    // Event delegation on the list: rows (and their Reindex buttons) are
+    // replaced wholesale on every render, so bind once on the stable parent.
+    var listEl = container.querySelector(".repos-list");
+    if (listEl) {
+      listEl.addEventListener("click", function (e) {
+        var btn = e.target.closest && e.target.closest(".repo-reindex");
+        if (!btn || btn.disabled) return;
+        onReindexClick(container, btn);
+      });
+    }
+  }
+
+  /**
+   * Handles a Reindex button click: confirms, submits the reindex job, then
+   * restarts the load/poll cycle so progress shows immediately.
+   */
+  function onReindexClick(container, btn) {
+    var repoId = btn.getAttribute("data-repo-id");
+    var slug = btn.getAttribute("data-repo-slug") || repoId;
+    if (!repoId) return;
+
+    var ok = window.confirm(
+      "Reindex " + slug + "?\n\n" +
+      "This re-clones and re-embeds the repository's docs. The current index " +
+      "stays fully searchable until the new one is ready, then swaps in atomically " +
+      "\u2014 nothing is ever left empty or half-built."
+    );
+    if (!ok) return;
+
+    var errEl = container.querySelector(".repos-error");
+    btn.disabled = true;
+    btn.textContent = "Queuing\u2026";
+
+    App.fetchJson("/api/repositories/" + encodeURIComponent(repoId) + "/reindex", {
+      method: "POST",
+      headers: { Accept: "application/json" },
+    })
+      .then(function () {
+        if (errEl) App.setAlert(errEl, "");
+        // Restart the cycle so the new job's progress starts showing right away.
+        start(container);
+      })
+      .catch(function (err) {
+        if (errEl) App.setAlert(errEl, "Could not start reindex: " + err.message);
+        btn.disabled = false;
+        btn.textContent = "Reindex";
+      });
   }
 
   // ---- Rendering ----------------------------------------------------------
@@ -252,6 +300,41 @@
     );
   }
 
+  /** The "Last indexed" cell: when the currently-live index generation last completed. */
+  function lastIndexedHtml(repo) {
+    var t = App.fmtTime(repo.lastIndexedAt);
+    return (
+      '<div class="repo-last-indexed">' +
+      '<span class="repo-last-indexed-label">Last indexed</span>' +
+      '<time datetime="' +
+      App.esc(repo.lastIndexedAt || "") +
+      '">' +
+      App.esc(t || "Never") +
+      "</time>" +
+      "</div>"
+    );
+  }
+
+  /**
+   * Reindex button. Disabled while a job for this repo is already in flight (non-terminal
+   * status) to avoid queuing overlapping ingestion runs against the same repo.
+   */
+  function reindexButtonHtml(repo) {
+    var state = App.badgeState(repo.status || "None");
+    var busy = state === "queued" || state === "active";
+    return (
+      '<button type="button" class="repo-reindex" data-repo-id="' +
+      App.esc(repo.id || "") +
+      '" data-repo-slug="' +
+      App.esc(repo.slug || repo.url || "") +
+      '"' +
+      (busy ? " disabled" : "") +
+      ">" +
+      (busy ? "Indexing\u2026" : "Reindex") +
+      "</button>"
+    );
+  }
+
   /** One compact single-line row for a repo. */
   function rowHtml(repo) {
     var state = App.badgeState(repo.status || "None");
@@ -262,7 +345,9 @@
       identHtml(repo) +
       badgeHtml(repo) +
       progressHtml(repo) +
+      lastIndexedHtml(repo) +
       updatedHtml(repo) +
+      reindexButtonHtml(repo) +
       "</div>"
     );
   }

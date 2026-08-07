@@ -24,6 +24,15 @@ public sealed class Repository
     public string? Summary { get; set; }
     public string? DefaultBranch { get; set; }
     public string? LastCommitSha { get; set; }
+    /// <summary>
+    /// Generation number of the currently-live documents/chunks. Ingestion writes new content
+    /// under a fresh generation (the job id) alongside the current one, then atomically swaps
+    /// (deletes the old generation, activates the new) once the new one is fully embedded. Reads
+    /// always filter to this value, so an in-progress reindex is invisible until it completes.
+    /// </summary>
+    public long CurrentGeneration { get; set; }
+    /// <summary>When the current generation finished successfully (null if never fully indexed).</summary>
+    public DateTimeOffset? LastIndexedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
@@ -52,6 +61,12 @@ public sealed class Document
     public string? Title { get; set; }
     /// <summary>SHA-256 of the file contents, used to skip unchanged files.</summary>
     public string ContentHash { get; set; } = "";
+    /// <summary>
+    /// Which ingestion generation this row belongs to (the job id that wrote it). Only rows whose
+    /// generation matches the owning repository's <see cref="Repository.CurrentGeneration"/> are
+    /// "live"; older/abandoned generations are cleaned up after a successful or failed reindex.
+    /// </summary>
+    public long Generation { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
 
@@ -60,6 +75,8 @@ public sealed class Chunk
     public long Id { get; set; }
     public long DocumentId { get; set; }
     public string RepositoryId { get; set; } = "";
+    /// <summary>Same generation as the owning <see cref="Document"/>; denormalized for fast filtering.</summary>
+    public long Generation { get; set; }
     public int Ordinal { get; set; }
     /// <summary>Heading breadcrumb, e.g. "Guide &gt; Installation".</summary>
     public string? HeadingPath { get; set; }
@@ -110,4 +127,6 @@ public sealed class RepositoryOverview
     public int ChunksEmbedded { get; set; }
     public string? Error { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
+    /// <summary>When the currently-live index generation finished successfully (null if never indexed).</summary>
+    public DateTimeOffset? LastIndexedAt { get; set; }
 }

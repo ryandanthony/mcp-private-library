@@ -22,10 +22,23 @@ ON CONFLICT (id) DO UPDATE SET url = EXCLUDED.url, slug = EXCLUDED.slug,
     canonical_name = EXCLUDED.canonical_name, updated_at = now()
 RETURNING id, url, slug, canonical_name AS CanonicalName, summary,
           default_branch AS DefaultBranch, last_commit_sha AS LastCommitSha,
+          current_generation AS CurrentGeneration, last_indexed_at AS LastIndexedAt,
           created_at AS CreatedAt, updated_at AS UpdatedAt;";
         await using var conn = _factory.Create();
         return await conn.QuerySingleAsync<Repository>(new CommandDefinition(
             sql, new { Id = id, Url = url, Slug = slug, CanonicalName = canonicalName }, cancellationToken: ct));
+    }
+
+    public async Task<Repository?> GetRepositoryAsync(string id, CancellationToken ct = default)
+    {
+        const string sql = @"
+SELECT id, url, slug, canonical_name AS CanonicalName, summary,
+       default_branch AS DefaultBranch, last_commit_sha AS LastCommitSha,
+       current_generation AS CurrentGeneration, last_indexed_at AS LastIndexedAt,
+       created_at AS CreatedAt, updated_at AS UpdatedAt
+FROM repositories WHERE id = @Id;";
+        await using var conn = _factory.Create();
+        return await conn.QuerySingleOrDefaultAsync<Repository>(new CommandDefinition(sql, new { Id = id }, cancellationToken: ct));
     }
 
     public async Task UpdateRepositoryCommitAsync(string repoId, string? branch, string? sha, CancellationToken ct = default)
@@ -142,52 +155,55 @@ WHERE status NOT IN (@Completed, @Failed);";
     }
 
     // ---- Documents & Chunks ----------------------------------------------
-
-    /// <summary>Removes all documents/chunks for a repo so re-ingestion starts clean.</summary>
-    public async Task ClearRepositoryContentAsync(string repoId, CancellationToken ct = default)
-    {
-        await using var conn = _factory.Create();
-        await conn.ExecuteAsync(new CommandDefinition(
-            "DELETE FROM documents WHERE repository_id = @Id;", new { Id = repoId }, cancellationToken: ct));
-    }
+    //
+    // Ingestion writes into a fresh "generation" (the job id) rather than deleting the current
+    // live content first. The live generation (repositories.current_generation) keeps serving
+    // reads/search the entire time a (re)index runs. Only once the new generation is fully built
+    // does SwapGenerationAsync flip the pointer and drop the old rows, in a single transaction:
+    // there is never a moment where the repo's index is empty or half-written. If ingestion fails
+    // partway, AbandonGenerationAsync deletes just the incomplete new generation, leaving the
+    // still-live old one untouched.
 
     public async Task<long> InsertDocumentAsync(Document doc, CancellationToken ct = default)
     {
         const string sql = @"
-INSERT INTO documents (repository_id, path, title, content_hash)
-VALUES (@RepositoryId, @Path, @Title, @ContentHash)
-ON CONFLICT (repository_id, path)
+INSERT INTO documents (repository_id, path, title, content_hash, generation)
+VALUES (@RepositoryId, @Path, @Title, @ContentHash, @Generation)
+ON CONFLICT (repository_id, generation, path)
 DO UPDATE SET title = EXCLUDED.title, content_hash = EXCLUDED.content_hash
 RETURNING id;";
         await using var conn = _factory.Create();
         return await conn.ExecuteScalarAsync<long>(new CommandDefinition(sql, new
         {
-            doc.RepositoryId, doc.Path, doc.Title, doc.ContentHash
+            doc.RepositoryId, doc.Path, doc.Title, doc.ContentHash, doc.Generation
         }, cancellationToken: ct));
     }
 
     public async Task<long> InsertChunkAsync(Chunk chunk, CancellationToken ct = default)
     {
         const string sql = @"
-INSERT INTO chunks (document_id, repository_id, ordinal, heading_path, content, token_estimate)
-VALUES (@DocumentId, @RepositoryId, @Ordinal, @HeadingPath, @Content, @TokenEstimate)
+INSERT INTO chunks (document_id, repository_id, generation, ordinal, heading_path, content, token_estimate)
+VALUES (@DocumentId, @RepositoryId, @Generation, @Ordinal, @HeadingPath, @Content, @TokenEstimate)
 RETURNING id;";
         await using var conn = _factory.Create();
         return await conn.ExecuteScalarAsync<long>(new CommandDefinition(sql, new
         {
-            chunk.DocumentId, chunk.RepositoryId, chunk.Ordinal, chunk.HeadingPath, chunk.Content, chunk.TokenEstimate
+            chunk.DocumentId, chunk.RepositoryId, chunk.Generation, chunk.Ordinal,
+            chunk.HeadingPath, chunk.Content, chunk.TokenEstimate
         }, cancellationToken: ct));
     }
 
-    public async Task<IReadOnlyList<Chunk>> GetChunksMissingEmbeddingsAsync(string repoId, int limit, CancellationToken ct = default)
+    public async Task<IReadOnlyList<Chunk>> GetChunksMissingEmbeddingsAsync(
+        string repoId, long generation, int limit, CancellationToken ct = default)
     {
         const string sql = @"
-SELECT id, document_id AS DocumentId, repository_id AS RepositoryId, ordinal,
+SELECT id, document_id AS DocumentId, repository_id AS RepositoryId, generation, ordinal,
        heading_path AS HeadingPath, content, token_estimate AS TokenEstimate
-FROM chunks WHERE repository_id = @RepoId AND embedding IS NULL ORDER BY id LIMIT @Limit;";
+FROM chunks WHERE repository_id = @RepoId AND generation = @Generation AND embedding IS NULL
+ORDER BY id LIMIT @Limit;";
         await using var conn = _factory.Create();
         var rows = await conn.QueryAsync<Chunk>(new CommandDefinition(
-            sql, new { RepoId = repoId, Limit = limit }, cancellationToken: ct));
+            sql, new { RepoId = repoId, Generation = generation, Limit = limit }, cancellationToken: ct));
         return rows.ToList();
     }
 
@@ -199,9 +215,53 @@ FROM chunks WHERE repository_id = @RepoId AND embedding IS NULL ORDER BY id LIMI
             sql, new { Id = chunkId, Embedding = embedding }, cancellationToken: ct));
     }
 
+    /// <summary>
+    /// Atomically activates a newly-built generation and drops the previously-live one, in one
+    /// transaction. Also stamps last_indexed_at. Call only after the new generation's documents,
+    /// chunks and embeddings are fully written.
+    /// </summary>
+    public async Task SwapGenerationAsync(string repoId, long newGeneration, CancellationToken ct = default)
+    {
+        await using var conn = _factory.Create();
+        await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+
+        var oldGeneration = await conn.ExecuteScalarAsync<long>(new CommandDefinition(
+            "SELECT current_generation FROM repositories WHERE id = @Id FOR UPDATE;",
+            new { Id = repoId }, transaction: tx, cancellationToken: ct));
+
+        await conn.ExecuteAsync(new CommandDefinition(
+            "UPDATE repositories SET current_generation = @NewGen, last_indexed_at = now(), updated_at = now() WHERE id = @Id;",
+            new { Id = repoId, NewGen = newGeneration }, transaction: tx, cancellationToken: ct));
+
+        if (oldGeneration != newGeneration)
+        {
+            // documents cascade-delete their chunks.
+            await conn.ExecuteAsync(new CommandDefinition(
+                "DELETE FROM documents WHERE repository_id = @Id AND generation = @OldGen;",
+                new { Id = repoId, OldGen = oldGeneration }, transaction: tx, cancellationToken: ct));
+        }
+
+        await tx.CommitAsync(ct);
+    }
+
+    /// <summary>
+    /// Deletes an incomplete generation after a failed (re)index, leaving whatever generation is
+    /// still marked live (untouched by a failed reindex) fully intact.
+    /// </summary>
+    public async Task AbandonGenerationAsync(string repoId, long generation, CancellationToken ct = default)
+    {
+        await using var conn = _factory.Create();
+        await conn.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM documents WHERE repository_id = @Id AND generation = @Generation;",
+            new { Id = repoId, Generation = generation }, cancellationToken: ct));
+    }
+
     // ---- Search -----------------------------------------------------------
 
     /// <summary>Semantic search over document chunks, optionally narrowed to one repository by ID.</summary>
+    /// <remarks>Only searches each repository's live generation, so an in-progress reindex never
+    /// surfaces partial/duplicate results.</remarks>
     public async Task<IReadOnlyList<SearchResult>> SearchAsync(
         Pgvector.Vector queryEmbedding, int topK, string? repositoryId, CancellationToken ct = default)
     {
@@ -217,6 +277,7 @@ FROM chunks c
 JOIN documents d ON d.id = c.document_id
 JOIN repositories r ON r.id = c.repository_id
 WHERE c.embedding IS NOT NULL
+  AND c.generation = r.current_generation
   AND (@RepoId IS NULL OR r.id = @RepoId)
 ORDER BY c.embedding <=> @Query
 LIMIT @TopK;";
@@ -235,8 +296,8 @@ LIMIT @TopK;";
     {
         const string sql = @"
 SELECT r.id AS RepositoryId, r.slug AS Slug, r.url AS Url, r.summary AS Summary,
-       (SELECT COUNT(*) FROM documents d WHERE d.repository_id = r.id) AS Documents,
-       (SELECT COUNT(*) FROM chunks c WHERE c.repository_id = r.id) AS Chunks,
+       (SELECT COUNT(*) FROM documents d WHERE d.repository_id = r.id AND d.generation = r.current_generation) AS Documents,
+       (SELECT COUNT(*) FROM chunks c WHERE c.repository_id = r.id AND c.generation = r.current_generation) AS Chunks,
        1 - (r.readme_embedding <=> @Query) AS Score
 FROM repositories r
 WHERE r.readme_embedding IS NOT NULL
@@ -256,8 +317,8 @@ SELECT r.id AS RepositoryId, r.slug AS Slug, r.url AS Url, r.summary AS Summary,
        COUNT(DISTINCT c.id) AS Chunks,
        0.0 AS Score
 FROM repositories r
-LEFT JOIN documents d ON d.repository_id = r.id
-LEFT JOIN chunks c ON c.repository_id = r.id
+LEFT JOIN documents d ON d.repository_id = r.id AND d.generation = r.current_generation
+LEFT JOIN chunks c ON c.repository_id = r.id AND c.generation = r.current_generation
 GROUP BY r.id, r.slug, r.url, r.summary
 ORDER BY r.slug;";
         await using var conn = _factory.Create();
@@ -274,8 +335,8 @@ ORDER BY r.slug;";
     {
         const string sql = @"
 SELECT r.id AS Id, r.slug AS Slug, r.url AS Url,
-       (SELECT COUNT(*) FROM documents d WHERE d.repository_id = r.id) AS Documents,
-       (SELECT COUNT(*) FROM chunks c WHERE c.repository_id = r.id) AS Chunks,
+       (SELECT COUNT(*) FROM documents d WHERE d.repository_id = r.id AND d.generation = r.current_generation) AS Documents,
+       (SELECT COUNT(*) FROM chunks c WHERE c.repository_id = r.id AND c.generation = r.current_generation) AS Chunks,
        COALESCE(j.status, 'None') AS Status,
        j.id AS JobId,
        COALESCE(j.files_total, 0) AS FilesTotal,
@@ -283,7 +344,8 @@ SELECT r.id AS Id, r.slug AS Slug, r.url AS Url,
        COALESCE(j.chunks_total, 0) AS ChunksTotal,
        COALESCE(j.chunks_embedded, 0) AS ChunksEmbedded,
        j.error AS Error,
-       COALESCE(j.updated_at, r.updated_at) AS UpdatedAt
+       COALESCE(j.updated_at, r.updated_at) AS UpdatedAt,
+       r.last_indexed_at AS LastIndexedAt
 FROM repositories r
 LEFT JOIN LATERAL (
     SELECT id, status, files_total, files_processed, chunks_total, chunks_embedded, error, updated_at
