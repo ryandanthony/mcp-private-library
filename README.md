@@ -115,7 +115,33 @@ Notes:
 
 Some MCP hosts don't implement the Streamable HTTP transport yet and will silently skip an
 `http` server entry. Bridge this endpoint over stdio with
-[`mcp-remote`](https://www.npmjs.com/package/mcp-remote), passing the key as a static header:
+[`mcp-remote`](https://www.npmjs.com/package/mcp-remote), which supports **either** auth style.
+
+**With OAuth** (preferred — no long-lived secret on disk). `mcp-remote` discovers the
+authorization server from the RFC 9728 metadata, runs authorization-code + PKCE in your
+browser once, then caches and refreshes the token under `~/.mcp-auth`:
+
+```json
+{
+  "mcp-private-library": {
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+      "-y", "mcp-remote@latest", "https://library.ants.zone/mcp",
+      "--transport", "http-only",
+      "--host", "127.0.0.1",
+      "--static-oauth-client-info", "{\"client_id\":\"mcp-private-library-mcp\"}",
+      "--static-oauth-client-metadata", "{\"scope\":\"openid profile email mcp:tools\"}"
+    ]
+  }
+}
+```
+
+`--static-oauth-client-info` pins the pre-registered public client. It's required because
+Keycloak's *Trusted Hosts* policy rejects anonymous dynamic client registration (RFC 7591),
+which is what `mcp-remote` would otherwise attempt.
+
+**With an API key**, if you'd rather not have a browser step at all (headless boxes, CI):
 
 ```json
 {
@@ -131,8 +157,8 @@ Some MCP hosts don't implement the Streamable HTTP transport yet and will silent
 }
 ```
 
-The config file now contains a credential, so make sure it isn't world-readable
-(`chmod 600`).
+This puts a credential in the config file, so make sure it isn't world-readable
+(`chmod 600`). The OAuth form above avoids that entirely.
 
 ### Repository IDs
 
