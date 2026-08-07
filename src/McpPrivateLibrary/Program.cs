@@ -141,7 +141,12 @@ if (authOptions.Enabled)
             options.ClientSecret = authOptions.ClientSecret;
             options.ResponseType = "code";
             options.UsePkce = true;
-            options.SaveTokens = true;
+            // The app only needs the user's identity (claims), never replays the id/access/
+            // refresh tokens downstream, so don't stuff them into the auth cookie. With
+            // SaveTokens=true the cookie (plus the id_token, access_token, refresh_token,
+            // and their expiry) can exceed nginx's default proxy header buffer size and
+            // blow up /signin-oidc with "upstream sent too big header".
+            options.SaveTokens = false;
             // Keycloak advertises a PAR endpoint but doesn't require it
             // (require_pushed_authorization_requests=false); the .NET OIDC handler's
             // "UseIfAvailable" default then attempts PAR and fails against Keycloak's
