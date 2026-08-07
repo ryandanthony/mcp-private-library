@@ -111,6 +111,29 @@ Notes:
 - **An API key cannot manage API keys.** `/api/keys` requires an interactive login (cookie or
   bearer token). If a leaked key could mint more keys, revoking it wouldn't end the compromise.
 
+### Clients that only speak stdio
+
+Some MCP hosts don't implement the Streamable HTTP transport yet and will silently skip an
+`http` server entry. Bridge this endpoint over stdio with
+[`mcp-remote`](https://www.npmjs.com/package/mcp-remote), passing the key as a static header:
+
+```json
+{
+  "mcp-private-library": {
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+      "-y", "mcp-remote@latest", "https://library.ants.zone/mcp",
+      "--transport", "http-only",
+      "--header", "Authorization: ApiKey mcpl_ab12cd34ef56gh78_xxxxxxxx"
+    ]
+  }
+}
+```
+
+The config file now contains a credential, so make sure it isn't world-readable
+(`chmod 600`).
+
 ### Repository IDs
 
 Each repository has a stable hash `id` = `sha256("github.com/<owner>/<repo>")` truncated to
