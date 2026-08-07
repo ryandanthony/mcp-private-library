@@ -247,27 +247,51 @@
 
   // ---- Auth bar (login/logout state in the sidebar) -----------------------
 
-  function initAuthBar() {
+  /**
+   * Renders the sidebar sign-in/out control from an already-fetched /auth/me
+   * payload (or null when auth is disabled/unreachable, which leaves it empty).
+   */
+  function renderAuthBar(info) {
     var el = document.getElementById("auth-bar");
     if (!el) return;
 
-    fetch("/auth/me", { headers: { Accept: "application/json" } })
-      .then(function (res) { return res.ok ? res.json() : { authenticated: false }; })
+    if (info && info.authenticated) {
+      el.innerHTML =
+        '<span class="auth-user" title="' + esc(info.email || "") + '">' +
+        esc(info.name || info.email || "Signed in") +
+        "</span>" +
+        '<form method="post" action="/auth/logout"><button type="submit" class="auth-link">Sign out</button></form>';
+    } else if (info) {
+      el.innerHTML =
+        '<a class="auth-link" href="/auth/login?returnUrl=' +
+        encodeURIComponent(window.location.href) +
+        '">Sign in</a>';
+    }
+  }
+
+  /**
+   * Checks auth state once at boot, before anything else renders. Landing on
+   * "Index a repo" makes no API calls of its own, so without this eager check
+   * an unauthenticated visitor would see a fully-usable-looking page and only
+   * discover they're logged out once some other action happens to hit a
+   * protected endpoint (e.g. switching tabs and back triggering a poll) —
+   * confusing and easy to miss. Redirects to Keycloak immediately instead.
+   *
+   * Resolves to the /auth/me payload (or null if auth is disabled/unreachable,
+   * e.g. local dev) so callers that also want to render the auth bar don't
+   * need a second fetch.
+   */
+  function requireAuthOrRedirect() {
+    return fetch("/auth/me", { headers: { Accept: "application/json" } })
+      .then(function (res) { return res.ok ? res.json() : null; })
       .then(function (info) {
-        if (info && info.authenticated) {
-          el.innerHTML =
-            '<span class="auth-user" title="' + esc(info.email || "") + '">' +
-            esc(info.name || info.email || "Signed in") +
-            "</span>" +
-            '<form method="post" action="/auth/logout"><button type="submit" class="auth-link">Sign out</button></form>';
-        } else {
-          el.innerHTML =
-            '<a class="auth-link" href="/auth/login?returnUrl=' +
-            encodeURIComponent(window.location.href) +
-            '">Sign in</a>';
+        if (info && !info.authenticated) {
+          window.location.href = "/auth/login?returnUrl=" + encodeURIComponent(window.location.href);
+          return new Promise(function () {}); // navigation in progress; never resolve
         }
+        return info;
       })
-      .catch(function () { /* Auth disabled (local dev) or unreachable: leave the bar empty. */ });
+      .catch(function () { return null; }); // auth disabled or /auth/me unreachable: proceed unauthenticated
   }
 
   // ---- Boot ---------------------------------------------------------------
@@ -278,7 +302,7 @@
     ensureView("repos").container = document.getElementById("view-repos");
     ensureView("search").container = document.getElementById("view-search");
 
-    initAuthBar();
+    requireAuthOrRedirect().then(renderAuthBar);
 
     // Register the landing screen.
     onView("home", initHome);
