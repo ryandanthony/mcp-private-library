@@ -11,6 +11,8 @@
 
   <ItemGroup>
     <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.0" />
     <PackageReference Include="ModelContextProtocol" Version="2.1.0" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.1.0" />
     <PackageReference Include="Npgsql" Version="10.0.3" />

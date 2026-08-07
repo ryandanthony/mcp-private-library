@@ -18,6 +18,13 @@
    */
   function fetchJson(url, options) {
     return fetch(url, options).then(function (res) {
+      if (res.status === 401) {
+        // Session expired/missing: send the user through the OIDC login flow and
+        // bring them back to where they were.
+        window.location.href = "/auth/login?returnUrl=" + encodeURIComponent(window.location.href);
+        // Never resolves; navigation is already underway.
+        return new Promise(function () {});
+      }
       return res
         .json()
         .catch(function () { return null; })
@@ -238,6 +245,31 @@
     urlInput.focus();
   }
 
+  // ---- Auth bar (login/logout state in the sidebar) -----------------------
+
+  function initAuthBar() {
+    var el = document.getElementById("auth-bar");
+    if (!el) return;
+
+    fetch("/auth/me", { headers: { Accept: "application/json" } })
+      .then(function (res) { return res.ok ? res.json() : { authenticated: false }; })
+      .then(function (info) {
+        if (info && info.authenticated) {
+          el.innerHTML =
+            '<span class="auth-user" title="' + esc(info.email || "") + '">' +
+            esc(info.name || info.email || "Signed in") +
+            "</span>" +
+            '<form method="post" action="/auth/logout"><button type="submit" class="auth-link">Sign out</button></form>';
+        } else {
+          el.innerHTML =
+            '<a class="auth-link" href="/auth/login?returnUrl=' +
+            encodeURIComponent(window.location.href) +
+            '">Sign in</a>';
+        }
+      })
+      .catch(function () { /* Auth disabled (local dev) or unreachable: leave the bar empty. */ });
+  }
+
   // ---- Boot ---------------------------------------------------------------
 
   function boot() {
@@ -245,6 +277,8 @@
     ensureView("home").container = document.getElementById("view-home");
     ensureView("repos").container = document.getElementById("view-repos");
     ensureView("search").container = document.getElementById("view-search");
+
+    initAuthBar();
 
     // Register the landing screen.
     onView("home", initHome);

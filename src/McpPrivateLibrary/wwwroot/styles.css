@@ -391,6 +391,8 @@ select {
   top: 0;
   align-self: start;
   height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .brand {
@@ -422,6 +424,36 @@ select {
   border-color: color-mix(in srgb, var(--primary) 30%, transparent);
 }
 .nav-ico { width: 1.2em; text-align: center; opacity: 0.85; }
+
+/* Sign-in/out state, pinned to the bottom of the sidebar. */
+.auth-bar {
+  margin-top: auto;
+  padding: 12px 8px 4px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+.auth-bar:empty { border-top: none; padding: 0; }
+.auth-user {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auth-bar form { margin: 0; }
+.auth-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--primary);
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+}
+.auth-link:hover { color: var(--primary-hover); text-decoration: underline; }
 
 .content {
   padding: 28px;

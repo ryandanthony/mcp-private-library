@@ -13,6 +13,9 @@
     "Chunking": {
       "MaxChars": 2000,
       "Overlap": 200
+    },
+    "Auth": {
+      "Enabled": false
     }
   }
 }

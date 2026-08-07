@@ -4,7 +4,15 @@ using McpPrivateLibrary.Ingestion;
 using McpPrivateLibrary.Mcp;
 using McpPrivateLibrary.Models;
 using McpPrivateLibrary.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
+using ModelContextProtocol.AspNetCore.Authentication;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,6 +51,118 @@ builder.Services
     .WithHttpTransport(options => options.Stateless = true)
     .WithTools<LibraryTools>();
 
+// ---- Authentication / authorization ------------------------------------------
+// Identity provider is Keycloak (realm `ants` at id.ants.zone). Two ways in:
+//   - Browser UI (index.html + /api/*): cookie session via OIDC authorization code
+//     flow against the confidential `mcp-private-library` client.
+//   - API / MCP clients (curl, agents, MCP hosts): JWT bearer tokens, validated
+//     directly against Keycloak's JWKS. No client secret needed for these callers.
+// `/mcp` additionally publishes RFC 9728 Protected Resource Metadata via AddMcp()
+// so MCP clients can self-discover the authorization server and required scopes.
+var authOptions = builder.Configuration.GetSection(LibraryOptions.SectionName).Get<LibraryOptions>()?.Auth
+    ?? new AuthOptions();
+
+if (authOptions.Enabled)
+{
+    builder.Services
+        .AddAuthentication(options =>
+        {
+            // "Smart" policy scheme below picks Bearer vs. Cookie per-request; this is
+            // both the default authenticate AND challenge scheme (a bare 401/redirect
+            // with no other signal falls back to the cookie scheme).
+            options.DefaultScheme = "Smart";
+            options.DefaultSignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+        })
+        // Chooses Bearer (-> MCP RFC 9728 challenge) for API/MCP callers that send an
+        // Authorization header, Cookie for browser navigations/fetches that don't.
+        // Applies uniformly to authenticate AND challenge, so /api and /mcp both "just
+        // work" for either kind of caller without per-endpoint scheme wiring.
+        .AddPolicyScheme("Smart", "Bearer or Cookie", options =>
+        {
+            options.ForwardDefaultSelector = context =>
+                context.Request.Headers.Authorization.Count > 0
+                    ? McpAuthenticationDefaults.AuthenticationScheme
+                    : CookieAuthenticationDefaults.AuthenticationScheme;
+        })
+        .AddJwtBearer(options =>
+        {
+            options.Authority = authOptions.Authority;
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuer = authOptions.Authority,
+                ValidateAudience = true,
+                ValidAudience = authOptions.Audience,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                NameClaimType = "preferred_username",
+                RoleClaimType = "roles",
+            };
+        })
+        // Adds the /.well-known/oauth-protected-resource endpoint and the
+        // WWW-Authenticate: Bearer resource_metadata="..." challenge header. Its
+        // ForwardAuthenticate defaults to "Bearer", so it authenticates via JwtBearer
+        // above and only adds the RFC 9728 metadata/header on top.
+        .AddMcp(options =>
+        {
+            options.ResourceMetadata = new()
+            {
+                Resource = authOptions.Audience,
+                ResourceName = "MCP Private Library",
+                AuthorizationServers = { authOptions.Authority },
+                ScopesSupported = ["openid", "profile", "mcp:tools"],
+            };
+        })
+        // Cookie session for the browser UI (index.html + same-origin fetch calls to
+        // /api). Never redirects on its own — /api and /mcp must return a plain
+        // 401/403 for fetch()/MCP clients; the SPA drives an explicit /auth/login
+        // navigation instead (see the auth endpoints below).
+        .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
+        {
+            options.Cookie.Name = "mcp-library.auth";
+            options.Cookie.SameSite = SameSiteMode.Lax;
+            options.ExpireTimeSpan = TimeSpan.FromDays(14);
+            options.SlidingExpiration = true;
+            options.Events.OnRedirectToLogin = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            };
+            options.Events.OnRedirectToAccessDenied = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return Task.CompletedTask;
+            };
+        })
+        .AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options =>
+        {
+            options.Authority = authOptions.Authority;
+            options.ClientId = authOptions.ClientId;
+            options.ClientSecret = authOptions.ClientSecret;
+            options.ResponseType = "code";
+            options.UsePkce = true;
+            options.SaveTokens = true;
+            // Keycloak advertises a PAR endpoint but doesn't require it
+            // (require_pushed_authorization_requests=false); the .NET OIDC handler's
+            // "UseIfAvailable" default then attempts PAR and fails against Keycloak's
+            // PAR endpoint. Plain authorization-code + PKCE is sufficient here.
+            options.PushedAuthorizationBehavior = PushedAuthorizationBehavior.Disable;
+            options.SignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+            options.Scope.Clear();
+            options.Scope.Add("openid");
+            options.Scope.Add("profile");
+            options.Scope.Add("email");
+            options.GetClaimsFromUserInfoEndpoint = true;
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidAudience = authOptions.ClientId,
+                NameClaimType = "preferred_username",
+            };
+        });
+
+    builder.Services.AddAuthorization();
+}
+
 var app = builder.Build();
 
 // Fail fast if embeddings aren't configured: no key means no ingestion or search.
@@ -66,8 +186,57 @@ using (var scope = app.Services.CreateScope())
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+if (authOptions.Enabled)
+{
+    // Behind nginx (TLS-terminating reverse proxy at library.ants.zone): trust its
+    // X-Forwarded-Proto/Host so redirect_uri generation and the `Secure` cookie flag
+    // are computed correctly instead of assuming plain http://.
+    app.UseForwardedHeaders(new ForwardedHeadersOptions
+    {
+        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost,
+        // nginx is the only hop; no known proxy IP list needed on a private LAN box.
+        KnownIPNetworks = { },
+        KnownProxies = { },
+    });
+
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    // ---- Auth endpoints (browser UI) -----------------------------------------
+    var auth = app.MapGroup("/auth");
+
+    // Kicks off the OIDC authorization-code flow; Keycloak redirects back to
+    // /signin-oidc, which signs the user into the cookie scheme and then redirects
+    // here again to `returnUrl` (defaults to the app root).
+    auth.MapGet("/login", (string? returnUrl, HttpContext ctx) =>
+        Results.Challenge(
+            new AuthenticationProperties { RedirectUri = string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl },
+            [OpenIdConnectDefaults.AuthenticationScheme]));
+
+    auth.MapPost("/logout", (HttpContext ctx) =>
+        Results.SignOut(
+            new AuthenticationProperties { RedirectUri = "/" },
+            [CookieAuthenticationDefaults.AuthenticationScheme, OpenIdConnectDefaults.AuthenticationScheme]));
+
+    // Lets the SPA render a login/logout state without guessing from cookie presence.
+    auth.MapGet("/me", (ClaimsPrincipal user) =>
+    {
+        if (user.Identity?.IsAuthenticated != true)
+            return Results.Ok(new { authenticated = false });
+
+        return Results.Ok(new
+        {
+            authenticated = true,
+            name = user.Identity.Name,
+            email = user.FindFirstValue("email"),
+        });
+    });
+}
+
 // ---- HTTP API ---------------------------------------------------------------
 var api = app.MapGroup("/api");
+if (authOptions.Enabled)
+    api.RequireAuthorization();
 
 api.MapPost("/jobs", async (SubmitRequest req, IJobSubmitter submitter, CancellationToken ct) =>
 {
@@ -188,7 +357,18 @@ api.MapPost("/search", async (SearchRequest req, IEmbeddingService embeddings, L
 });
 
 // ---- MCP endpoint -----------------------------------------------------------
-app.MapMcp("/mcp");
+var mcp = app.MapMcp("/mcp");
+if (authOptions.Enabled)
+{
+    // Force the McpAuth scheme specifically (not the header-sniffing "Smart" scheme
+    // used by /api): MCP clients probe with no Authorization header on their first
+    // request and rely on the 401's WWW-Authenticate: Bearer resource_metadata="..."
+    // header to discover how to authenticate. Under "Smart", a header-less request
+    // would route to the Cookie scheme instead and never receive that header.
+    mcp.RequireAuthorization(policy => policy
+        .AddAuthenticationSchemes(McpAuthenticationDefaults.AuthenticationScheme)
+        .RequireAuthenticatedUser());
+}
 
 app.Run();
 
