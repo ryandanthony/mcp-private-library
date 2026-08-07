@@ -52,6 +52,32 @@ public sealed class Job
     public DateTimeOffset UpdatedAt { get; set; }
 }
 
+public enum JobCreationOutcome
+{
+    /// <summary>A new job was created and should be enqueued.</summary>
+    Created,
+    /// <summary>A job for this repository is already queued/running; no new job was created.</summary>
+    AlreadyInFlight,
+    /// <summary>The repository was indexed too recently; no new job was created.</summary>
+    TooRecent,
+    /// <summary>The submitted URL couldn't be parsed as a GitHub repo URL.</summary>
+    InvalidUrl,
+}
+
+/// <summary>Result of <see cref="Data.LibraryStore.TryCreateJobAsync"/>.</summary>
+public sealed class JobCreationResult
+{
+    public JobCreationOutcome Outcome { get; private init; }
+    /// <summary>The newly-created job (Created), or the existing in-flight job (AlreadyInFlight).</summary>
+    public Job? Job { get; private init; }
+    /// <summary>When the repo was last successfully indexed (TooRecent only).</summary>
+    public DateTimeOffset? LastIndexedAt { get; private init; }
+
+    public static JobCreationResult Created(Job job) => new() { Outcome = JobCreationOutcome.Created, Job = job };
+    public static JobCreationResult AlreadyInFlight(Job job) => new() { Outcome = JobCreationOutcome.AlreadyInFlight, Job = job };
+    public static JobCreationResult TooRecent(DateTimeOffset lastIndexedAt) => new() { Outcome = JobCreationOutcome.TooRecent, LastIndexedAt = lastIndexedAt };
+}
+
 public sealed class Document
 {
     public long Id { get; set; }

@@ -64,19 +64,6 @@ WHERE id = @Id;";
 
     // ---- Jobs -------------------------------------------------------------
 
-    public async Task<Job> CreateJobAsync(string repoId, string url, CancellationToken ct = default)
-    {
-        const string sql = @"
-INSERT INTO jobs (repository_id, url, status)
-VALUES (@RepoId, @Url, @Status)
-RETURNING id, repository_id AS RepositoryId, url, status, files_total AS FilesTotal,
-          files_processed AS FilesProcessed, chunks_total AS ChunksTotal,
-          chunks_embedded AS ChunksEmbedded, error, created_at AS CreatedAt, updated_at AS UpdatedAt;";
-        await using var conn = _factory.Create();
-        return await conn.QuerySingleAsync<Job>(new CommandDefinition(
-            sql, new { RepoId = repoId, Url = url, Status = JobStatus.Queued.ToString() }, cancellationToken: ct));
-    }
-
     public async Task<Job?> GetJobAsync(long id, CancellationToken ct = default)
     {
         const string sql = @"
@@ -88,15 +75,84 @@ FROM jobs WHERE id = @Id;";
         return await conn.QuerySingleOrDefaultAsync<Job>(new CommandDefinition(sql, new { Id = id }, cancellationToken: ct));
     }
 
-    public async Task<Job?> GetLatestJobForUrlAsync(string url, CancellationToken ct = default)
+    public async Task<Job?> GetLatestJobForRepositoryAsync(string repoId, CancellationToken ct = default)
     {
         const string sql = @"
 SELECT id, repository_id AS RepositoryId, url, status, files_total AS FilesTotal,
        files_processed AS FilesProcessed, chunks_total AS ChunksTotal,
        chunks_embedded AS ChunksEmbedded, error, created_at AS CreatedAt, updated_at AS UpdatedAt
-FROM jobs WHERE url = @Url ORDER BY id DESC LIMIT 1;";
+FROM jobs WHERE repository_id = @RepoId ORDER BY id DESC LIMIT 1;";
         await using var conn = _factory.Create();
-        return await conn.QuerySingleOrDefaultAsync<Job>(new CommandDefinition(sql, new { Url = url }, cancellationToken: ct));
+        return await conn.QuerySingleOrDefaultAsync<Job>(new CommandDefinition(sql, new { RepoId = repoId }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// Statuses that mean "ingestion is actively running or about to be" for a job. Used to guard
+    /// against queuing a duplicate job for a repo that's already being indexed.
+    /// </summary>
+    private static readonly string[] InFlightStatuses =
+        [JobStatus.Queued.ToString(), JobStatus.Cloning.ToString(), JobStatus.Discovering.ToString(),
+         JobStatus.Chunking.ToString(), JobStatus.Embedding.ToString()];
+
+    /// <summary>
+    /// Atomically creates a new ingestion job for a repository, unless one is already in flight
+    /// (Queued/Cloning/Discovering/Chunking/Embedding) or -- when <paramref name="force"/> is
+    /// false -- the repository was successfully indexed more recently than
+    /// <paramref name="minReindexInterval"/> ago. Locks the repository row for the duration of
+    /// the check-and-insert so two concurrent submissions for the same repo can't both pass the
+    /// guard and create duplicate jobs.
+    /// </summary>
+    /// <param name="force">
+    /// True for the explicit Reindex action, which is a deliberate user request: skips the
+    /// recent-index cooldown but still refuses to queue a second job while one is already
+    /// running for this repo.
+    /// </param>
+    public async Task<JobCreationResult> TryCreateJobAsync(
+        string repoId, string url, bool force, TimeSpan minReindexInterval, CancellationToken ct = default)
+    {
+        await using var conn = _factory.Create();
+        await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+
+        // Lock the repository row so a concurrent submission for the same repo blocks here
+        // until this transaction commits, instead of racing past the checks below.
+        // (Selected into a typed row rather than a bare DateTimeOffset? scalar: Dapper's raw
+        // scalar mapping doesn't apply Npgsql's timestamptz -> DateTimeOffset conversion the way
+        // entity-property mapping does, and throws InvalidCastException on a non-null value.)
+        var repoRow = await conn.QuerySingleOrDefaultAsync<RepoLockRow>(new CommandDefinition(
+            "SELECT last_indexed_at AS LastIndexedAt FROM repositories WHERE id = @Id FOR UPDATE;",
+            new { Id = repoId }, transaction: tx, cancellationToken: ct));
+        var lastIndexedAt = repoRow?.LastIndexedAt;
+
+        var existingJob = await conn.QuerySingleOrDefaultAsync<Job>(new CommandDefinition(@"
+SELECT id, repository_id AS RepositoryId, url, status, files_total AS FilesTotal,
+       files_processed AS FilesProcessed, chunks_total AS ChunksTotal,
+       chunks_embedded AS ChunksEmbedded, error, created_at AS CreatedAt, updated_at AS UpdatedAt
+FROM jobs WHERE repository_id = @RepoId AND status = ANY(@InFlight) ORDER BY id DESC LIMIT 1;",
+            new { RepoId = repoId, InFlight = InFlightStatuses }, transaction: tx, cancellationToken: ct));
+
+        if (existingJob is not null)
+        {
+            await tx.CommitAsync(ct); // read-only; nothing to roll back
+            return JobCreationResult.AlreadyInFlight(existingJob);
+        }
+
+        if (!force && lastIndexedAt is { } last && DateTimeOffset.UtcNow - last < minReindexInterval)
+        {
+            await tx.CommitAsync(ct);
+            return JobCreationResult.TooRecent(last);
+        }
+
+        var job = await conn.QuerySingleAsync<Job>(new CommandDefinition(@"
+INSERT INTO jobs (repository_id, url, status)
+VALUES (@RepoId, @Url, @Status)
+RETURNING id, repository_id AS RepositoryId, url, status, files_total AS FilesTotal,
+          files_processed AS FilesProcessed, chunks_total AS ChunksTotal,
+          chunks_embedded AS ChunksEmbedded, error, created_at AS CreatedAt, updated_at AS UpdatedAt;",
+            new { RepoId = repoId, Url = url, Status = JobStatus.Queued.ToString() }, transaction: tx, cancellationToken: ct));
+
+        await tx.CommitAsync(ct);
+        return JobCreationResult.Created(job);
     }
 
     public async Task<IReadOnlyList<Job>> ListJobsAsync(int limit = 50, CancellationToken ct = default)
@@ -355,5 +411,11 @@ ORDER BY COALESCE(j.updated_at, r.updated_at) DESC, r.slug;";
         await using var conn = _factory.Create();
         var rows = await conn.QueryAsync<RepositoryOverview>(new CommandDefinition(sql, cancellationToken: ct));
         return rows.ToList();
+    }
+
+    /// <summary>Minimal row shape for the repository-lock read inside <see cref="TryCreateJobAsync"/>.</summary>
+    private sealed class RepoLockRow
+    {
+        public DateTimeOffset? LastIndexedAt { get; set; }
     }
 }

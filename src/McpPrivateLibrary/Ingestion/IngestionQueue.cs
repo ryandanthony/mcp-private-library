@@ -1,16 +1,27 @@
 using System.Threading.Channels;
+using McpPrivateLibrary.Configuration;
 using McpPrivateLibrary.Data;
 using McpPrivateLibrary.Models;
 using McpPrivateLibrary.Services;
+using Microsoft.Extensions.Options;
 
 namespace McpPrivateLibrary.Ingestion;
 
-public sealed record JobSubmission(long JobId, JobStatus Status, string Message);
+public sealed record JobSubmission(long JobId, JobStatus Status, string Message, JobCreationOutcome Outcome);
 
 public interface IJobSubmitter
 {
-    /// <summary>Validates the URL, upserts the repo, creates a queued job, and enqueues it for processing.</summary>
-    Task<JobSubmission> SubmitAsync(string url, CancellationToken ct = default);
+    /// <summary>
+    /// Validates the URL, upserts the repo, and creates + enqueues a job for it -- unless the
+    /// repo already has a job in flight, or (when <paramref name="force"/> is false) it was
+    /// indexed more recently than <see cref="LibraryOptions.MinReindexInterval"/> ago, in which
+    /// case no new job is created and the existing/skip reason is reported back instead.
+    /// </summary>
+    /// <param name="force">
+    /// True to bypass the recent-index cooldown (the explicit Reindex action). Submissions from
+    /// the "Index a repo" form / plain POST /api/jobs should pass false.
+    /// </param>
+    Task<JobSubmission> SubmitAsync(string url, bool force = false, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -20,25 +31,65 @@ public interface IJobSubmitter
 public sealed class IngestionQueue : IJobSubmitter
 {
     private readonly LibraryStore _store;
+    private readonly LibraryOptions _options;
     private readonly Channel<long> _channel = Channel.CreateUnbounded<long>();
 
-    public IngestionQueue(LibraryStore store) => _store = store;
+    public IngestionQueue(LibraryStore store, IOptions<LibraryOptions> options)
+    {
+        _store = store;
+        _options = options.Value;
+    }
 
     public ChannelReader<long> Reader => _channel.Reader;
 
-    public async Task<JobSubmission> SubmitAsync(string url, CancellationToken ct = default)
+    public async Task<JobSubmission> SubmitAsync(string url, bool force = false, CancellationToken ct = default)
     {
         if (!GitHubUrlParser.TryParse(url, out var repoRef, out var error))
-            return new JobSubmission(0, JobStatus.Failed, error ?? "Invalid URL.");
+            return new JobSubmission(0, JobStatus.Failed, error ?? "Invalid URL.", JobCreationOutcome.InvalidUrl);
 
         var repo = await _store.UpsertRepositoryAsync(
             repoRef.Id, repoRef.CloneUrl, repoRef.Slug, repoRef.CanonicalName, ct);
-        var job = await _store.CreateJobAsync(repo.Id, repoRef.CloneUrl, ct);
-        await _channel.Writer.WriteAsync(job.Id, ct);
-        return new JobSubmission(job.Id, JobStatus.Queued, $"Queued ingestion for {repoRef.Slug} (id {repo.Id}).");
+
+        var result = await _store.TryCreateJobAsync(repo.Id, repoRef.CloneUrl, force, _options.MinReindexInterval, ct);
+
+        switch (result.Outcome)
+        {
+            case JobCreationOutcome.AlreadyInFlight:
+                return new JobSubmission(
+                    result.Job!.Id, result.Job.Status,
+                    $"{repoRef.Slug} (id {repo.Id}) is already indexing (job #{result.Job.Id}, {result.Job.Status}). Not queuing a duplicate.",
+                    JobCreationOutcome.AlreadyInFlight);
+
+            case JobCreationOutcome.TooRecent:
+                var since = DateTimeOffset.UtcNow - result.LastIndexedAt!.Value;
+                return new JobSubmission(
+                    0, JobStatus.Failed,
+                    $"{repoRef.Slug} (id {repo.Id}) was already indexed {FormatSince(since)} ago (within the {FormatInterval(_options.MinReindexInterval)} cooldown). Use Reindex to force a refresh.",
+                    JobCreationOutcome.TooRecent);
+
+            default: // Created
+                await _channel.Writer.WriteAsync(result.Job!.Id, ct);
+                return new JobSubmission(
+                    result.Job.Id, JobStatus.Queued, $"Queued ingestion for {repoRef.Slug} (id {repo.Id}).",
+                    JobCreationOutcome.Created);
+        }
     }
 
     /// <summary>Re-signals any jobs already sitting in Queued (e.g. reloaded after a restart).</summary>
     public async Task EnqueueAsync(long jobId, CancellationToken ct = default)
         => await _channel.Writer.WriteAsync(jobId, ct);
+
+    private static string FormatSince(TimeSpan span)
+    {
+        if (span.TotalDays >= 1) return $"{span.TotalDays:F1} day(s)";
+        if (span.TotalHours >= 1) return $"{span.TotalHours:F1} hour(s)";
+        return $"{Math.Max(1, (int)span.TotalMinutes)} minute(s)";
+    }
+
+    private static string FormatInterval(TimeSpan span)
+    {
+        if (span.TotalDays >= 1 && span.TotalDays % 1 == 0) return $"{(int)span.TotalDays}-day";
+        if (span.TotalHours >= 1) return $"{span.TotalHours:F0}-hour";
+        return $"{(int)span.TotalMinutes}-minute";
+    }
 }

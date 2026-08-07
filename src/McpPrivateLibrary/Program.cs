@@ -248,11 +248,11 @@ api.MapPost("/jobs", async (SubmitRequest req, IJobSubmitter submitter, Cancella
     if (req is null || string.IsNullOrWhiteSpace(req.Url))
         return Results.BadRequest(new { error = "A GitHub URL is required." });
 
-    var result = await submitter.SubmitAsync(req.Url, ct);
-    if (result.Status == JobStatus.Failed)
-        return Results.BadRequest(new { error = result.Message });
-
-    return Results.Ok(new { jobId = result.JobId, status = result.Status.ToString(), message = result.Message });
+    // force: false -- respects the in-flight and recent-index guards so re-submitting a URL
+    // that's already indexing (or was indexed within Library:MinReindexInterval) doesn't queue
+    // a redundant duplicate job. Use the Reindex button/endpoint to force a refresh.
+    var result = await submitter.SubmitAsync(req.Url, force: false, ct);
+    return JobSubmissionResult(result);
 });
 
 api.MapGet("/jobs", async (LibraryStore store, CancellationToken ct) =>
@@ -270,18 +270,17 @@ api.MapGet("/jobs/{id:long}", async (long id, LibraryStore store, CancellationTo
 // Reindex an already-submitted repository: re-runs the same clone -> chunk -> embed pipeline
 // against a fresh generation, then atomically swaps it in for the old one (see LibraryStore's
 // SwapGenerationAsync / IngestionService). The current index stays fully live and searchable
-// for the entire duration; nothing is cleared upfront.
+// for the entire duration; nothing is cleared upfront. This is a deliberate user action, so it
+// bypasses the recent-index cooldown (force: true) -- but still refuses to queue a second job
+// if one is already running for this repo.
 api.MapPost("/repositories/{id}/reindex", async (string id, LibraryStore store, IJobSubmitter submitter, CancellationToken ct) =>
 {
     var repo = await store.GetRepositoryAsync(id, ct);
     if (repo is null)
         return Results.NotFound(new { error = "Repository not found." });
 
-    var result = await submitter.SubmitAsync(repo.Url, ct);
-    if (result.Status == JobStatus.Failed)
-        return Results.BadRequest(new { error = result.Message });
-
-    return Results.Ok(new { jobId = result.JobId, status = result.Status.ToString(), message = result.Message });
+    var result = await submitter.SubmitAsync(repo.Url, force: true, ct);
+    return JobSubmissionResult(result);
 });
 
 api.MapGet("/repositories", async (LibraryStore store, CancellationToken ct) =>
@@ -407,6 +406,20 @@ static object ToDto(Job j) => new
     error = j.Error,
     createdAt = j.CreatedAt,
     updatedAt = j.UpdatedAt
+};
+
+// Maps a job submission outcome to an HTTP response. Created/AlreadyInFlight are both "OK, here's
+// the job to watch" (200) -- AlreadyInFlight isn't an error, it's telling the caller a job is
+// already running and pointing them at it instead of creating a duplicate. TooRecent is a real
+// "not doing that" (409 Conflict, distinct from 400 so callers can tell "try again differently"
+// apart from "this request is malformed"). InvalidUrl is the pre-existing 400 case.
+static IResult JobSubmissionResult(JobSubmission result) => result.Outcome switch
+{
+    JobCreationOutcome.Created or JobCreationOutcome.AlreadyInFlight =>
+        Results.Ok(new { jobId = result.JobId, status = result.Status.ToString(), message = result.Message, alreadyInFlight = result.Outcome == JobCreationOutcome.AlreadyInFlight }),
+    JobCreationOutcome.TooRecent =>
+        Results.Conflict(new { error = result.Message }),
+    _ => Results.BadRequest(new { error = result.Message }),
 };
 
 static string? Snippet(string? text, int max)

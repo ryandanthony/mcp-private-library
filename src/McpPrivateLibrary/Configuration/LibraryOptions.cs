@@ -17,6 +17,15 @@ public sealed class LibraryOptions
     /// <summary>Delete the cloned repo from disk once ingestion finishes.</summary>
     public bool CleanupClones { get; set; } = true;
 
+    /// <summary>
+    /// Minimum time between automatic (re)indexes of the same repository submitted via the
+    /// normal "Index a repo" form / POST /api/jobs. Prevents accidentally queuing duplicate
+    /// ingestion runs when a repo is already indexing or was indexed recently. Does not apply
+    /// to the explicit Reindex action, which is a deliberate user request and always proceeds
+    /// (subject only to the in-flight-job guard).
+    /// </summary>
+    public TimeSpan MinReindexInterval { get; set; } = TimeSpan.FromHours(24);
+
     public EmbeddingOptions Embedding { get; set; } = new();
 
     public ChunkingOptions Chunking { get; set; } = new();
