@@ -187,6 +187,8 @@ Available tools:
 - **`search_docs`** — semantic search over the indexed Markdown, returning the most
   relevant chunks with their source metadata. Optionally narrow to one repo via `repositoryId`.
 - **`list_repositories`** — list the repositories that have been indexed (with their hash IDs).
+- **`add_repository`** — submit a GitHub repository URL for indexing. Returns a job id to poll
+  with `job_status`. Pass `force: true` to bypass the recent-index cooldown and reindex.
 - **`job_status`** — check the status/progress of an indexing job.
 
 During ingestion the repository's root `README.md` is embedded as a repo-level vector, which is

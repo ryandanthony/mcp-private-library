@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text;
 using McpPrivateLibrary.Data;
+using McpPrivateLibrary.Ingestion;
 using McpPrivateLibrary.Models;
 using McpPrivateLibrary.Services;
 using ModelContextProtocol.Server;
@@ -22,16 +23,50 @@ public sealed class LibraryTools
 
     private readonly LibraryStore _store;
     private readonly IEmbeddingService _embeddings;
+    private readonly IJobSubmitter _submitter;
 
     /// <summary>
     /// Creates the tool set.
     /// </summary>
     /// <param name="store">Data access for repositories, jobs and search.</param>
     /// <param name="embeddings">Embedding service used to encode search queries.</param>
-    public LibraryTools(LibraryStore store, IEmbeddingService embeddings)
+    /// <param name="submitter">Queue used to submit repositories for ingestion.</param>
+    public LibraryTools(LibraryStore store, IEmbeddingService embeddings, IJobSubmitter submitter)
     {
         _store = store;
         _embeddings = embeddings;
+        _submitter = submitter;
+    }
+
+    /// <summary>
+    /// Submits a GitHub repository for ingestion into the library. The clone -> chunk ->
+    /// embed pipeline runs in the background; the returned job id can be polled with
+    /// <see cref="job_status"/>.
+    /// </summary>
+    /// <param name="url">GitHub repository URL to index.</param>
+    /// <param name="force">True to bypass the recent-index cooldown and force a reindex.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A human-readable submission result including the job id when one was created.</returns>
+    [McpServerTool]
+    [Description("Add a GitHub repository to the private documentation library and start indexing its Markdown docs in the background. Returns a job id to poll with job_status. If the repository is already indexing, or was indexed recently, no duplicate job is queued unless force is true (which forces a reindex).")]
+    public async Task<string> add_repository(
+        [Description("GitHub repository URL to index, e.g. https://github.com/owner/repo.")] string url,
+        [Description("Force a reindex even if the repository was indexed recently (default false).")] bool force = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return "Please provide a GitHub repository URL.";
+
+        var result = await _submitter.SubmitAsync(url.Trim(), force, cancellationToken);
+
+        return result.Outcome switch
+        {
+            JobCreationOutcome.Created =>
+                $"{result.Message} Job id: {result.JobId}. Poll it with job_status.",
+            JobCreationOutcome.AlreadyInFlight =>
+                $"{result.Message} Job id: {result.JobId}.",
+            _ => result.Message,
+        };
     }
 
     /// <summary>
