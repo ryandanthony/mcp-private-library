@@ -86,7 +86,7 @@ Use it like this:
 
 ```bash
 curl -H "Authorization: ApiKey mcpl_ab12cd34ef56gh78_xxxxxxxx" \
-     https://library.ants.zone/api/repositories
+     https://<library-host>/api/repositories
 ```
 
 Or in an MCP client config:
@@ -95,7 +95,7 @@ Or in an MCP client config:
 {
   "mcp-private-library": {
     "type": "http",
-    "url": "https://library.ants.zone/mcp",
+    "url": "https://<library-host>/mcp",
     "headers": { "Authorization": "ApiKey mcpl_ab12cd34ef56gh78_xxxxxxxx" }
   }
 }
@@ -127,7 +127,7 @@ browser once, then caches and refreshes the token under `~/.mcp-auth`:
     "type": "stdio",
     "command": "npx",
     "args": [
-      "-y", "mcp-remote@latest", "https://library.ants.zone/mcp",
+      "-y", "mcp-remote@latest", "https://<library-host>/mcp",
       "--transport", "http-only",
       "--host", "127.0.0.1",
       "--static-oauth-client-info", "{\"client_id\":\"mcp-private-library-mcp\"}",
@@ -149,7 +149,7 @@ which is what `mcp-remote` would otherwise attempt.
     "type": "stdio",
     "command": "npx",
     "args": [
-      "-y", "mcp-remote@latest", "https://library.ants.zone/mcp",
+      "-y", "mcp-remote@latest", "https://<library-host>/mcp",
       "--transport", "http-only",
       "--header", "Authorization: ApiKey mcpl_ab12cd34ef56gh78_xxxxxxxx"
     ]
