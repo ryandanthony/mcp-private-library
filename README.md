@@ -1,6 +1,6 @@
 # MCP Private Library
 
-An MCP (Model Context Protocol) server that indexes the Markdown documentation of GitHub repositories and makes it semantically searchable. Submit a GitHub repo URL through a minimal web UI (or the HTTP API); the app clones the repo, extracts every Markdown file, chunks and embeds the content, and stores the vectors in Postgres. MCP clients can then run semantic search over the indexed docs. Built in C# / ASP.NET Core with Dapper for data access, PostgreSQL + [pgvector](https://github.com/pgvector/pgvector) for vector similarity search, and OpenRouter for embeddings. An OpenRouter API key is required; the app fails fast at startup if one is not configured.
+An MCP (Model Context Protocol) server that indexes documentation into a private, semantically searchable library. Two sources are supported: GitHub repositories (every Markdown file is extracted) and websites (a single page, or a same-host crawl). Submit a source through a minimal web UI or the HTTP API; the app fetches the content, chunks and embeds it, and stores the vectors in Postgres. MCP clients can then run semantic search over the indexed docs. Built in C# / ASP.NET Core with Dapper for data access, PostgreSQL + [pgvector](https://github.com/pgvector/pgvector) for vector similarity search, and OpenRouter for embeddings. An OpenRouter API key is required; the app fails fast at startup if one is not configured.
 
 ## Prerequisites
 
@@ -46,11 +46,37 @@ An MCP (Model Context Protocol) server that indexes the Markdown documentation o
      -d '{"url":"https://github.com/org/repo.git"}'
    ```
 
+   Or index a website instead of a git repo (see [Website sources](#website-sources) below):
+
+   ```bash
+   curl -X POST http://localhost:5171/api/jobs/web \
+     -H "Content-Type: application/json" \
+     -d '{"url":"https://example.com/docs","crawlSameDomain":true,"maxPages":100}'
+   ```
+
+## Website sources
+
+In addition to GitHub repos, you can index a website directly, from the UI's **Add source**
+screen or via `POST /api/jobs/web`:
+
+```json
+{ "url": "https://example.com/docs", "crawlSameDomain": true, "maxPages": 100 }
+```
+
+- `crawlSameDomain: false` (or omitted) indexes only the single given page.
+- `crawlSameDomain: true` crawls same-host links reachable from that page, breadth-first.
+- `maxPages` caps how many pages a crawl will fetch (omit for no cap). Ignored in single-page mode.
+- Crawls do not consult `robots.txt`; only point this at sites you're authorized to crawl.
+
+Both modes go through the same chunk -> embed -> store pipeline as GitHub repos, so the
+resulting pages are searchable via `/api/search` and reindexable like any other source.
+
 ## HTTP API
 
 | Method | Path                       | Description                                                             |
 | ------ | -------------------------- | ----------------------------------------------------------------------- |
 | POST   | `/api/jobs`                | Submit a GitHub URL to start a new indexing job.                        |
+| POST   | `/api/jobs/web`            | Submit a website URL to index (single page or same-host crawl). `{url, crawlSameDomain?, maxPages?}`. See [Website sources](#website-sources). |
 | GET    | `/api/jobs/{id}`           | Get the status and progress of a single job.                            |
 | GET    | `/api/jobs`                | List all jobs.                                                          |
 | GET    | `/api/repositories`        | List indexed repositories (each with its hash `id`, slug and counts).   |
