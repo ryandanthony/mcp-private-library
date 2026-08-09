@@ -13,20 +13,28 @@ public sealed class LibraryStore
     // ---- Repositories -----------------------------------------------------
 
     public async Task<Repository> UpsertRepositoryAsync(
-        string id, string url, string slug, string canonicalName, CancellationToken ct = default)
+        string id, string url, string slug, string canonicalName,
+        RepositorySourceType sourceType = RepositorySourceType.Git,
+        bool crawlSameDomain = false, int? maxPages = null, CancellationToken ct = default)
     {
         const string sql = @"
-INSERT INTO repositories (id, url, slug, canonical_name)
-VALUES (@Id, @Url, @Slug, @CanonicalName)
+INSERT INTO repositories (id, url, slug, canonical_name, source_type, crawl_same_domain, max_pages)
+VALUES (@Id, @Url, @Slug, @CanonicalName, @SourceType, @CrawlSameDomain, @MaxPages)
 ON CONFLICT (id) DO UPDATE SET url = EXCLUDED.url, slug = EXCLUDED.slug,
-    canonical_name = EXCLUDED.canonical_name, updated_at = now()
+    canonical_name = EXCLUDED.canonical_name, source_type = EXCLUDED.source_type,
+    crawl_same_domain = EXCLUDED.crawl_same_domain, max_pages = EXCLUDED.max_pages, updated_at = now()
 RETURNING id, url, slug, canonical_name AS CanonicalName, summary,
           default_branch AS DefaultBranch, last_commit_sha AS LastCommitSha,
+          source_type AS SourceType, crawl_same_domain AS CrawlSameDomain, max_pages AS MaxPages,
           current_generation AS CurrentGeneration, last_indexed_at AS LastIndexedAt,
           created_at AS CreatedAt, updated_at AS UpdatedAt;";
         await using var conn = _factory.Create();
         return await conn.QuerySingleAsync<Repository>(new CommandDefinition(
-            sql, new { Id = id, Url = url, Slug = slug, CanonicalName = canonicalName }, cancellationToken: ct));
+            sql, new
+            {
+                Id = id, Url = url, Slug = slug, CanonicalName = canonicalName,
+                SourceType = sourceType.ToString(), CrawlSameDomain = crawlSameDomain, MaxPages = maxPages
+            }, cancellationToken: ct));
     }
 
     public async Task<Repository?> GetRepositoryAsync(string id, CancellationToken ct = default)
@@ -34,6 +42,7 @@ RETURNING id, url, slug, canonical_name AS CanonicalName, summary,
         const string sql = @"
 SELECT id, url, slug, canonical_name AS CanonicalName, summary,
        default_branch AS DefaultBranch, last_commit_sha AS LastCommitSha,
+       source_type AS SourceType, crawl_same_domain AS CrawlSameDomain, max_pages AS MaxPages,
        current_generation AS CurrentGeneration, last_indexed_at AS LastIndexedAt,
        created_at AS CreatedAt, updated_at AS UpdatedAt
 FROM repositories WHERE id = @Id;";
@@ -91,8 +100,8 @@ FROM jobs WHERE repository_id = @RepoId ORDER BY id DESC LIMIT 1;";
     /// against queuing a duplicate job for a repo that's already being indexed.
     /// </summary>
     private static readonly string[] InFlightStatuses =
-        [JobStatus.Queued.ToString(), JobStatus.Cloning.ToString(), JobStatus.Discovering.ToString(),
-         JobStatus.Chunking.ToString(), JobStatus.Embedding.ToString()];
+        [JobStatus.Queued.ToString(), JobStatus.Cloning.ToString(), JobStatus.Scraping.ToString(),
+         JobStatus.Discovering.ToString(), JobStatus.Chunking.ToString(), JobStatus.Embedding.ToString()];
 
     /// <summary>
     /// Atomically creates a new ingestion job for a repository, unless one is already in flight

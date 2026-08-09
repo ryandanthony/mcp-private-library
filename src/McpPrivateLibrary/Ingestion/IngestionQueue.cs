@@ -22,6 +22,14 @@ public interface IJobSubmitter
     /// the "Index a repo" form / plain POST /api/jobs should pass false.
     /// </param>
     Task<JobSubmission> SubmitAsync(string url, bool force = false, CancellationToken ct = default);
+
+    /// <summary>
+    /// Same contract as <see cref="SubmitAsync"/>, but for a website source: <paramref name="url"/>
+    /// is the start page and <paramref name="crawlSameDomain"/> selects a same-host crawl instead
+    /// of a single-page scrape.
+    /// </summary>
+    Task<JobSubmission> SubmitWebAsync(
+        string url, bool crawlSameDomain, int? maxPages, bool force = false, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -48,29 +56,51 @@ public sealed class IngestionQueue : IJobSubmitter
             return new JobSubmission(0, JobStatus.Failed, error ?? "Invalid URL.", JobCreationOutcome.InvalidUrl);
 
         var repo = await _store.UpsertRepositoryAsync(
-            repoRef.Id, repoRef.CloneUrl, repoRef.Slug, repoRef.CanonicalName, ct);
+            repoRef.Id, repoRef.CloneUrl, repoRef.Slug, repoRef.CanonicalName,
+            RepositorySourceType.Git, crawlSameDomain: false, maxPages: null, ct);
 
         var result = await _store.TryCreateJobAsync(repo.Id, repoRef.CloneUrl, force, _options.MinReindexInterval, ct);
 
+        return await FinishSubmissionAsync(repo, repoRef.CloneUrl, repoRef.Slug, result, force, ct);
+    }
+
+    public async Task<JobSubmission> SubmitWebAsync(
+        string url, bool crawlSameDomain, int? maxPages, bool force = false, CancellationToken ct = default)
+    {
+        if (!WebUrlParser.TryParse(url, crawlSameDomain, out var webRef, out var error))
+            return new JobSubmission(0, JobStatus.Failed, error ?? "Invalid URL.", JobCreationOutcome.InvalidUrl);
+
+        var repo = await _store.UpsertRepositoryAsync(
+            webRef.Id, webRef.StartUrl, webRef.Slug, webRef.CanonicalName,
+            RepositorySourceType.Web, webRef.CrawlSameDomain, maxPages, ct);
+
+        var result = await _store.TryCreateJobAsync(repo.Id, webRef.StartUrl, force, _options.MinReindexInterval, ct);
+
+        return await FinishSubmissionAsync(repo, webRef.StartUrl, webRef.Slug, result, force, ct);
+    }
+
+    private async Task<JobSubmission> FinishSubmissionAsync(
+        Repository repo, string url, string slug, JobCreationResult result, bool force, CancellationToken ct)
+    {
         switch (result.Outcome)
         {
             case JobCreationOutcome.AlreadyInFlight:
                 return new JobSubmission(
                     result.Job!.Id, result.Job.Status,
-                    $"{repoRef.Slug} (id {repo.Id}) is already indexing (job #{result.Job.Id}, {result.Job.Status}). Not queuing a duplicate.",
+                    $"{slug} (id {repo.Id}) is already indexing (job #{result.Job.Id}, {result.Job.Status}). Not queuing a duplicate.",
                     JobCreationOutcome.AlreadyInFlight);
 
             case JobCreationOutcome.TooRecent:
                 var since = DateTimeOffset.UtcNow - result.LastIndexedAt!.Value;
                 return new JobSubmission(
                     0, JobStatus.Failed,
-                    $"{repoRef.Slug} (id {repo.Id}) was already indexed {FormatSince(since)} ago (within the {FormatInterval(_options.MinReindexInterval)} cooldown). Use Reindex to force a refresh.",
+                    $"{slug} (id {repo.Id}) was already indexed {FormatSince(since)} ago (within the {FormatInterval(_options.MinReindexInterval)} cooldown). Use Reindex to force a refresh.",
                     JobCreationOutcome.TooRecent);
 
             default: // Created
                 await _channel.Writer.WriteAsync(result.Job!.Id, ct);
                 return new JobSubmission(
-                    result.Job.Id, JobStatus.Queued, $"Queued ingestion for {repoRef.Slug} (id {repo.Id}).",
+                    result.Job.Id, JobStatus.Queued, $"Queued ingestion for {slug} (id {repo.Id}).",
                     JobCreationOutcome.Created);
         }
     }

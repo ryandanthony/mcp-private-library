@@ -4,6 +4,8 @@ public enum JobStatus
 {
     Queued,
     Cloning,
+    /// <summary>Fetching pages of a website (crawl or single-page). The web-source equivalent of Cloning.</summary>
+    Scraping,
     Discovering,
     Chunking,
     Embedding,
@@ -11,19 +13,34 @@ public enum JobStatus
     Failed
 }
 
+/// <summary>Where a repository's content comes from, driving which ingestion pipeline runs.</summary>
+public enum RepositorySourceType
+{
+    /// <summary>Cloned from a GitHub repository; Markdown files discovered on disk.</summary>
+    Git,
+    /// <summary>Scraped from a website (single page or same-domain crawl) and converted to Markdown.</summary>
+    Web,
+}
+
 public sealed class Repository
 {
-    /// <summary>Stable hash ID: sha256("github.com/owner/repo")[..16].</summary>
+    /// <summary>Stable hash ID: sha256("github.com/owner/repo")[..16] (or the web equivalent).</summary>
     public string Id { get; set; } = "";
     public string Url { get; set; } = "";
-    /// <summary>Normalized owner/name, e.g. "org/repo".</summary>
+    /// <summary>Normalized owner/name, e.g. "org/repo" (git) or a host[/path] (web).</summary>
     public string Slug { get; set; } = "";
-    /// <summary>Provider-qualified canonical name, e.g. "github.com/org/repo".</summary>
+    /// <summary>Provider-qualified canonical name, e.g. "github.com/org/repo" or "web-crawl:docs.example.com".</summary>
     public string CanonicalName { get; set; } = "";
-    /// <summary>Short summary (derived from the root README) used for repo-level search display.</summary>
+    /// <summary>Short summary (derived from the root README, or the start page for websites) used for repo-level search display.</summary>
     public string? Summary { get; set; }
     public string? DefaultBranch { get; set; }
     public string? LastCommitSha { get; set; }
+    /// <summary>Whether this repository's content is cloned from git or scraped from the web.</summary>
+    public RepositorySourceType SourceType { get; set; } = RepositorySourceType.Git;
+    /// <summary>Web sources only: whether ingestion crawls same-host links from the start URL rather than fetching only that one page.</summary>
+    public bool CrawlSameDomain { get; set; }
+    /// <summary>Web sources only: optional cap on the number of pages a crawl will fetch. Null means no limit.</summary>
+    public int? MaxPages { get; set; }
     /// <summary>
     /// Generation number of the currently-live documents/chunks. Ingestion writes new content
     /// under a fresh generation (the job id) alongside the current one, then atomically swaps

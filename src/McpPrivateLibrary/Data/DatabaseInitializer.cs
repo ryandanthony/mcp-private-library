@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS repositories (
     readme_embedding vector({dim}) NULL,
     default_branch TEXT NULL,
     last_commit_sha TEXT NULL,
+    source_type    TEXT NOT NULL DEFAULT 'Git',
+    crawl_same_domain BOOLEAN NOT NULL DEFAULT false,
+    max_pages      INT NULL,
     current_generation BIGINT NOT NULL DEFAULT 0,
     last_indexed_at TIMESTAMPTZ NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -55,6 +58,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_repositories_canonical ON repositories (can
 -- Additive columns for databases created before generation-based reindexing existed.
 ALTER TABLE repositories ADD COLUMN IF NOT EXISTS current_generation BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE repositories ADD COLUMN IF NOT EXISTS last_indexed_at TIMESTAMPTZ NULL;
+-- Additive columns for databases created before website scraping existed.
+ALTER TABLE repositories ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'Git';
+ALTER TABLE repositories ADD COLUMN IF NOT EXISTS crawl_same_domain BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE repositories ADD COLUMN IF NOT EXISTS max_pages INT NULL;
 
 CREATE TABLE IF NOT EXISTS jobs (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

@@ -199,6 +199,28 @@
       '    <p id="form-error" class="error-text" role="alert" hidden></p>' +
       '    <p id="form-ok" class="ok-text" role="status" hidden></p>' +
       '  </form>' +
+      "</section>" +
+      '<section class="card home-card" aria-labelledby="home-web-heading">' +
+      '  <h2 id="home-web-heading">Index a website</h2>' +
+      '  <p class="muted">Paste a page URL to scrape it (and optionally crawl same-host links) and index its content for semantic search.</p>' +
+      '  <form id="web-job-form" novalidate>' +
+      '    <div class="field">' +
+      '      <label for="web-url" class="sr-only">Website URL</label>' +
+      '      <input type="url" id="web-url" name="url" placeholder="https://docs.example.com/guide" autocomplete="off" spellcheck="false" required />' +
+      '    </div>' +
+      '    <div class="field field-inline">' +
+      '      <label for="web-crawl"><input type="checkbox" id="web-crawl" name="crawl" /> Crawl same-host pages (not just this page)</label>' +
+      '    </div>' +
+      '    <div class="field" id="web-max-pages-field" hidden>' +
+      '      <label for="web-max-pages">Max pages (optional, blank = unlimited)</label>' +
+      '      <input type="number" id="web-max-pages" name="maxPages" min="1" step="1" />' +
+      '    </div>' +
+      '    <div class="form-actions">' +
+      '      <button type="submit" id="web-submit-btn" class="btn btn-primary">Submit</button>' +
+      '    </div>' +
+      '    <p id="web-form-error" class="error-text" role="alert" hidden></p>' +
+      '    <p id="web-form-ok" class="ok-text" role="status" hidden></p>' +
+      '  </form>' +
       "</section>";
 
     var form = container.querySelector("#job-form");
@@ -243,6 +265,70 @@
     });
 
     urlInput.focus();
+
+    // ---- Website form -----------------------------------------------------
+
+    var webForm = container.querySelector("#web-job-form");
+    var webUrlInput = container.querySelector("#web-url");
+    var webCrawlInput = container.querySelector("#web-crawl");
+    var webMaxPagesField = container.querySelector("#web-max-pages-field");
+    var webMaxPagesInput = container.querySelector("#web-max-pages");
+    var webSubmitBtn = container.querySelector("#web-submit-btn");
+    var webFormError = container.querySelector("#web-form-error");
+    var webFormOk = container.querySelector("#web-form-ok");
+
+    webCrawlInput.addEventListener("change", function () {
+      webMaxPagesField.hidden = !webCrawlInput.checked;
+    });
+
+    webForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      setAlert(webFormError, "");
+      setAlert(webFormOk, "");
+
+      var url = webUrlInput.value.trim();
+      if (!url) {
+        setAlert(webFormError, "Please enter a website URL.");
+        webUrlInput.focus();
+        return;
+      }
+
+      var crawl = !!webCrawlInput.checked;
+      var maxPagesRaw = webMaxPagesInput.value.trim();
+      var maxPages = null;
+      if (crawl && maxPagesRaw !== "") {
+        maxPages = parseInt(maxPagesRaw, 10);
+        if (!isFinite(maxPages) || maxPages < 1) {
+          setAlert(webFormError, "Max pages must be a positive number, or left blank.");
+          webMaxPagesInput.focus();
+          return;
+        }
+      }
+
+      webSubmitBtn.disabled = true;
+      webSubmitBtn.textContent = "Submitting…";
+
+      fetchJson("/api/jobs/web", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ url: url, crawlSameDomain: crawl, maxPages: maxPages }),
+      })
+        .then(function (job) {
+          webUrlInput.value = "";
+          webCrawlInput.checked = false;
+          webMaxPagesInput.value = "";
+          webMaxPagesField.hidden = true;
+          setAlert(webFormOk, "Queued job #" + job.jobId + ". Track progress on the Repositories screen.");
+          navigate("repos");
+        })
+        .catch(function (err) {
+          setAlert(webFormError, err.message);
+        })
+        .finally(function () {
+          webSubmitBtn.disabled = false;
+          webSubmitBtn.textContent = "Submit";
+        });
+    });
   }
 
   // ---- Auth bar (login/logout state in the sidebar) -----------------------

@@ -39,6 +39,7 @@ builder.Services.AddSingleton(sp =>
     new MarkdownProcessor(sp.GetRequiredService<IOptions<LibraryOptions>>().Value.Chunking));
 
 builder.Services.AddHttpClient<IEmbeddingService, OpenRouterEmbeddingService>();
+builder.Services.AddHttpClient<WebScraperService>();
 
 // Ingestion pipeline + background worker.
 builder.Services.AddScoped<IngestionService>();
@@ -265,6 +266,17 @@ api.MapPost("/jobs", async (SubmitRequest req, IJobSubmitter submitter, Cancella
     // that's already indexing (or was indexed within Library:MinReindexInterval) doesn't queue
     // a redundant duplicate job. Use the Reindex button/endpoint to force a refresh.
     var result = await submitter.SubmitAsync(req.Url, force: false, ct);
+    return JobSubmissionResult(result);
+});
+
+// Website source: crawlSameDomain selects a same-host crawl from the given start page instead of
+// a single-page scrape. Same in-flight/recent-index guards as the git submission path above.
+api.MapPost("/jobs/web", async (SubmitWebRequest req, IJobSubmitter submitter, CancellationToken ct) =>
+{
+    if (req is null || string.IsNullOrWhiteSpace(req.Url))
+        return Results.BadRequest(new { error = "A URL is required." });
+
+    var result = await submitter.SubmitWebAsync(req.Url, req.CrawlSameDomain, req.MaxPages, force: false, ct);
     return JobSubmissionResult(result);
 });
 
@@ -577,6 +589,7 @@ static object ToApiKeyDto(ApiKey k) => new
 };
 
 public sealed record SubmitRequest(string Url);
+public sealed record SubmitWebRequest(string Url, bool CrawlSameDomain, int? MaxPages);
 
 /// <summary>
 /// Request body for minting an API key. <c>ExpiresInDays</c> is optional; omitting it creates a
