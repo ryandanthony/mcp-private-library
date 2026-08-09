@@ -216,7 +216,7 @@ public sealed class IngestionService
     private async Task<(IReadOnlyList<SourceDocument> Docs, string SummarySource)> FetchWebAsync(
         Job job, Repository repo, CancellationToken ct)
     {
-        if (!WebUrlParser.TryParse(job.Url, repo.CrawlSameDomain, out var webRef, out var parseError))
+        if (!WebUrlParser.TryParse(job.Url, repo.CrawlSameDomain, out var webRef, out var parseError, repo.MaxPages))
             throw new InvalidOperationException(parseError ?? "Invalid URL.");
 
         job.Status = JobStatus.Scraping;

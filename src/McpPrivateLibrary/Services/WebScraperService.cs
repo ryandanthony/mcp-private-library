@@ -15,8 +15,10 @@ public sealed record ScrapedPage(string Url, string Path, string? Title, string 
 ///
 /// No headless browser: pages that appear to require client-side JS to render their content
 /// fail explicitly (<see cref="DetectJsRendered"/>) rather than silently producing an
-/// empty/garbage index entry. Crawling never consults robots.txt and has no built-in page/depth
-/// limit (a repository may opt into <c>MaxPages</c> in the future; unset means unlimited).
+/// empty/garbage index entry. Crawling never consults robots.txt; a same-host crawl has no
+/// depth limit and no page limit unless the repository's <see cref="WebSourceRef.MaxPages"/>
+/// is set, in which case the crawl stops (without failing) once that many pages have been
+/// fetched, even if links remain queued.
 /// </summary>
 public sealed class WebScraperService
 {
@@ -68,6 +70,14 @@ public sealed class WebScraperService
         var first = true;
         while (queue.Count > 0)
         {
+            if (source.MaxPages is int cap && results.Count >= cap)
+            {
+                _logger.LogInformation(
+                    "Crawl of {Host} reached MaxPages ({Cap}); stopping with {Queued} URL(s) still queued.",
+                    source.Host, cap, queue.Count);
+                break;
+            }
+
             ct.ThrowIfCancellationRequested();
             var url = queue.Dequeue();
 

@@ -8,7 +8,7 @@ namespace McpPrivateLibrary.Services;
 /// same-host crawl. Mirrors <see cref="GitHubRepoRef"/>'s shape so the rest of the pipeline
 /// (repository row, job, generation-swap) treats git and web sources uniformly.
 /// </summary>
-public sealed record WebSourceRef(string StartUrl, string Host, bool CrawlSameDomain)
+public sealed record WebSourceRef(string StartUrl, string Host, bool CrawlSameDomain, int? MaxPages = null)
 {
     /// <summary>Human-friendly display name: the host alone for a crawl, or host+path for a single page.</summary>
     public string Slug
@@ -56,7 +56,8 @@ public sealed record WebSourceRef(string StartUrl, string Host, bool CrawlSameDo
 /// </summary>
 public static class WebUrlParser
 {
-    public static bool TryParse(string? input, bool crawlSameDomain, out WebSourceRef source, out string? error)
+    public static bool TryParse(
+        string? input, bool crawlSameDomain, out WebSourceRef source, out string? error, int? maxPages = null)
     {
         source = null!;
         error = null;
@@ -76,7 +77,7 @@ public static class WebUrlParser
             return false;
         }
 
-        source = new WebSourceRef(uri.ToString(), uri.Host, crawlSameDomain);
+        source = new WebSourceRef(uri.ToString(), uri.Host, crawlSameDomain, maxPages);
         return true;
     }
 }

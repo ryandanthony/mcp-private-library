@@ -67,7 +67,7 @@ public sealed class IngestionQueue : IJobSubmitter
     public async Task<JobSubmission> SubmitWebAsync(
         string url, bool crawlSameDomain, int? maxPages, bool force = false, CancellationToken ct = default)
     {
-        if (!WebUrlParser.TryParse(url, crawlSameDomain, out var webRef, out var error))
+        if (!WebUrlParser.TryParse(url, crawlSameDomain, out var webRef, out var error, maxPages))
             return new JobSubmission(0, JobStatus.Failed, error ?? "Invalid URL.", JobCreationOutcome.InvalidUrl);
 
         var repo = await _store.UpsertRepositoryAsync(
