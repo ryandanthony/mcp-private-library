@@ -1,5 +1,7 @@
 # MCP Private Library
 
+> **Note:** This project was intentionally vibe coded.
+
 An MCP (Model Context Protocol) server that indexes documentation into a private, semantically searchable library. Two sources are supported: GitHub repositories (every Markdown file is extracted) and websites (a single page, or a same-host crawl). Submit a source through a minimal web UI or the HTTP API; the app fetches the content, chunks and embeds it, and stores the vectors in Postgres. MCP clients can then run semantic search over the indexed docs. Built in C# / ASP.NET Core with Dapper for data access, PostgreSQL + [pgvector](https://github.com/pgvector/pgvector) for vector similarity search, and OpenRouter for embeddings. An OpenRouter API key is required; the app fails fast at startup if one is not configured.
 
 ## Prerequisites
