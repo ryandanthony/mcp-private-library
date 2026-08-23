@@ -87,6 +87,7 @@
   function badgeState(status) {
     if (status === "Completed") return "completed";
     if (status === "Failed") return "failed";
+    if (status === "Cancelled") return "failed"; // reuse the failed styling: also a stopped/terminal, non-success outcome
     if (status === "Queued") return "queued";
     if (status === "None") return "queued";
     return "active"; // Cloning, Discovering, Chunking, Embedding

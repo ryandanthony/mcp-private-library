@@ -33,7 +33,7 @@
 
   // Statuses that never change on their own; when ALL repos are terminal we
   // stop polling. "None" = repo has no job record yet.
-  var TERMINAL = { Completed: true, Failed: true, None: true };
+  var TERMINAL = { Completed: true, Failed: true, Cancelled: true, None: true };
 
   // ---- Module-level state -------------------------------------------------
   var currentContainer = null; // the #view-repos element while this view is active
@@ -120,14 +120,20 @@
       });
     }
 
-    // Event delegation on the list: rows (and their Reindex buttons) are
+    // Event delegation on the list: rows (and their Reindex/Cancel buttons) are
     // replaced wholesale on every render, so bind once on the stable parent.
     var listEl = container.querySelector(".repos-list");
     if (listEl) {
       listEl.addEventListener("click", function (e) {
-        var btn = e.target.closest && e.target.closest(".repo-reindex");
-        if (!btn || btn.disabled) return;
-        onReindexClick(container, btn);
+        var reindexBtn = e.target.closest && e.target.closest(".repo-reindex");
+        if (reindexBtn && !reindexBtn.disabled) {
+          onReindexClick(container, reindexBtn);
+          return;
+        }
+        var cancelBtn = e.target.closest && e.target.closest(".repo-cancel");
+        if (cancelBtn && !cancelBtn.disabled) {
+          onCancelClick(container, cancelBtn);
+        }
       });
     }
   }
@@ -166,6 +172,42 @@
         if (errEl) App.setAlert(errEl, "Could not start reindex: " + err.message);
         btn.disabled = false;
         btn.textContent = "Reindex";
+      });
+  }
+
+  /**
+   * Handles a Cancel button click: confirms, then stops the in-flight (or
+   * still-queued) job via POST /api/jobs/{id}/cancel. Restarts the load/poll
+   * cycle so the row immediately reflects the Cancelled status.
+   */
+  function onCancelClick(container, btn) {
+    var jobId = btn.getAttribute("data-job-id");
+    var slug = btn.getAttribute("data-repo-slug") || jobId;
+    if (!jobId) return;
+
+    var ok = window.confirm(
+      "Cancel indexing for " + slug + "?\n\n" +
+      "This stops the crawl/embedding job in place. Any docs already indexed " +
+      "in the previous generation are unaffected."
+    );
+    if (!ok) return;
+
+    var errEl = container.querySelector(".repos-error");
+    btn.disabled = true;
+    btn.textContent = "Cancelling\u2026";
+
+    App.fetchJson("/api/jobs/" + encodeURIComponent(jobId) + "/cancel", {
+      method: "POST",
+      headers: { Accept: "application/json" },
+    })
+      .then(function () {
+        if (errEl) App.setAlert(errEl, "");
+        start(container);
+      })
+      .catch(function (err) {
+        if (errEl) App.setAlert(errEl, "Could not cancel job: " + err.message);
+        btn.disabled = false;
+        btn.textContent = "Cancel";
       });
   }
 
@@ -234,6 +276,18 @@
         '">' +
         App.esc(truncate(errText, ERROR_MAX)) +
         "</span>" +
+        "</div>"
+      );
+    }
+
+    if (status === "Cancelled") {
+      return (
+        '<div class="repo-progress">' +
+        '<span class="repo-counts muted">Cancelled \u00b7 ' +
+        docs +
+        " docs \u00b7 " +
+        chunks +
+        " chunks</span>" +
         "</div>"
       );
     }
@@ -335,6 +389,24 @@
     );
   }
 
+  /**
+   * Cancel button: only rendered while a job for this repo is actually in flight
+   * (queued or actively processing) and we have a jobId to target. Stops the job
+   * in place via POST /api/jobs/{id}/cancel rather than killing the process.
+   */
+  function cancelButtonHtml(repo) {
+    var state = App.badgeState(repo.status || "None");
+    var busy = state === "queued" || state === "active";
+    if (!busy || !repo.jobId) return "";
+    return (
+      '<button type="button" class="repo-cancel" data-job-id="' +
+      App.esc(repo.jobId) +
+      '" data-repo-slug="' +
+      App.esc(repo.slug || repo.url || "") +
+      '">Cancel</button>'
+    );
+  }
+
   /** One compact single-line row for a repo. */
   function rowHtml(repo) {
     var state = App.badgeState(repo.status || "None");
@@ -348,6 +420,7 @@
       lastIndexedHtml(repo) +
       updatedHtml(repo) +
       reindexButtonHtml(repo) +
+      cancelButtonHtml(repo) +
       "</div>"
     );
   }

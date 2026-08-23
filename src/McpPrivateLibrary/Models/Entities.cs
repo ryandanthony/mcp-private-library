@@ -10,7 +10,10 @@ public enum JobStatus
     Chunking,
     Embedding,
     Completed,
-    Failed
+    Failed,
+    /// <summary>User-requested stop of an in-flight job. Terminal, like Completed/Failed:
+    /// never re-queued on restart and never counted as "in flight" for dedupe purposes.</summary>
+    Cancelled
 }
 
 /// <summary>Where a repository's content comes from, driving which ingestion pipeline runs.</summary>

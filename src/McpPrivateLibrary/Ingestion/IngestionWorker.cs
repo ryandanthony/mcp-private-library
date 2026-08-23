@@ -40,10 +40,42 @@ public sealed class IngestionWorker : BackgroundService
                     continue;
                 }
 
-                // Each job gets its own DI scope so scoped services (e.g. Npgsql) are fresh.
-                using var scope = _scopeFactory.CreateScope();
-                var ingestion = scope.ServiceProvider.GetRequiredService<IngestionService>();
-                await ingestion.ProcessAsync(job, stoppingToken);
+                // Cancelled while still sitting in the channel (IngestionQueue.TryCancelAsync
+                // marks a Queued job Cancelled directly since there's no running pipeline yet to
+                // signal). Don't start it.
+                if (job.Status == Models.JobStatus.Cancelled)
+                {
+                    _logger.LogInformation("Job {JobId}: skipping, cancelled before it started.", jobId);
+                    continue;
+                }
+
+                // Own token source for this job, linked to the app's shutdown token so a normal
+                // shutdown still stops the pipeline promptly. Registered before processing starts
+                // so a concurrent cancel request can always find it; always unregistered and
+                // disposed afterwards regardless of outcome.
+                using var jobCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                _queue.RegisterRunning(jobId, jobCts);
+                try
+                {
+                    // Each job gets its own DI scope so scoped services (e.g. Npgsql) are fresh.
+                    using var scope = _scopeFactory.CreateScope();
+                    var ingestion = scope.ServiceProvider.GetRequiredService<IngestionService>();
+                    await ingestion.ProcessAsync(job, jobCts.Token);
+                }
+                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+                {
+                    // Cancelled via the API (jobCts, not the app shutting down): IngestionService
+                    // already unwound its try/finally (cleaned up the abandoned generation etc.)
+                    // and rethrew. Record the terminal status here since ProcessAsync's own catch
+                    // block only handles ordinary failures, not user-requested cancellation.
+                    job.Status = Models.JobStatus.Cancelled;
+                    await _store.UpdateJobProgressAsync(job, CancellationToken.None);
+                    _logger.LogInformation("Job {JobId}: cancelled by request.", jobId);
+                }
+                finally
+                {
+                    _queue.UnregisterRunning(jobId);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

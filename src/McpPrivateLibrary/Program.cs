@@ -292,19 +292,33 @@ api.MapGet("/jobs/{id:long}", async (long id, LibraryStore store, CancellationTo
     return job is null ? Results.NotFound(new { error = "Job not found." }) : Results.Ok(ToDto(job));
 });
 
+// Stops an in-flight (or still-queued) job. Signals the running pipeline's cancellation token if
+// it's already processing, or marks it Cancelled directly if it hasn't started yet; either way the
+// job settles into the terminal Cancelled status without needing to kill the process or touch the
+// DB by hand. Returns 404 if the job doesn't exist or is already terminal (nothing to cancel).
+api.MapPost("/jobs/{id:long}/cancel", async (long id, IJobSubmitter submitter, CancellationToken ct) =>
+{
+    var cancelled = await submitter.TryCancelAsync(id, ct);
+    return cancelled
+        ? Results.Ok(new { id, status = nameof(JobStatus.Cancelled) })
+        : Results.NotFound(new { error = "Job not found or already finished." });
+});
+
 // Reindex an already-submitted repository: re-runs the same clone -> chunk -> embed pipeline
 // against a fresh generation, then atomically swaps it in for the old one (see LibraryStore's
 // SwapGenerationAsync / IngestionService). The current index stays fully live and searchable
 // for the entire duration; nothing is cleared upfront. This is a deliberate user action, so it
 // bypasses the recent-index cooldown (force: true) -- but still refuses to queue a second job
-// if one is already running for this repo.
-api.MapPost("/repositories/{id}/reindex", async (string id, LibraryStore store, IJobSubmitter submitter, CancellationToken ct) =>
+// if one is already running for this repo. IJobSubmitter.ReindexAsync routes to the git or web
+// pipeline based on the repository's own source type, so this works for web-sourced repos too
+// (submitting the stored URL through the GitHub-only path here was the "Only GitHub HTTPS or SSH
+// clone URLs are supported" bug for those).
+api.MapPost("/repositories/{id}/reindex", async (string id, IJobSubmitter submitter, CancellationToken ct) =>
 {
-    var repo = await store.GetRepositoryAsync(id, ct);
-    if (repo is null)
+    var result = await submitter.ReindexAsync(id, ct);
+    if (result is null)
         return Results.NotFound(new { error = "Repository not found." });
 
-    var result = await submitter.SubmitAsync(repo.Url, force: true, ct);
     return JobSubmissionResult(result);
 });
 

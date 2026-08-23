@@ -209,13 +209,14 @@ WHERE id = @Id;";
     {
         const string sql = @"
 UPDATE jobs SET status = @Queued, updated_at = now()
-WHERE status NOT IN (@Completed, @Failed);";
+WHERE status NOT IN (@Completed, @Failed, @Cancelled);";
         await using var conn = _factory.Create();
         return await conn.ExecuteAsync(new CommandDefinition(sql, new
         {
             Queued = JobStatus.Queued.ToString(),
             Completed = JobStatus.Completed.ToString(),
-            Failed = JobStatus.Failed.ToString()
+            Failed = JobStatus.Failed.ToString(),
+            Cancelled = JobStatus.Cancelled.ToString()
         }, cancellationToken: ct));
     }
 

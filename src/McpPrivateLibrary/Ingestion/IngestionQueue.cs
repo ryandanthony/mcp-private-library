@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 using McpPrivateLibrary.Configuration;
 using McpPrivateLibrary.Data;
@@ -30,6 +31,25 @@ public interface IJobSubmitter
     /// </summary>
     Task<JobSubmission> SubmitWebAsync(
         string url, bool crawlSameDomain, int? maxPages, bool force = false, CancellationToken ct = default);
+
+    /// <summary>
+    /// Forces a reindex of an already-known repository by id, routing to <see cref="SubmitAsync"/>
+    /// or <see cref="SubmitWebAsync"/> based on the repository's stored <see cref="RepositorySourceType"/>
+    /// rather than assuming git. Centralizing the branch here means every caller (the REST endpoint,
+    /// MCP tools, ...) gets the right pipeline for web sources instead of hitting the GitHub URL
+    /// parser with a non-GitHub URL. Returns null if no repository with that id exists.
+    /// </summary>
+    Task<JobSubmission?> ReindexAsync(string repositoryId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Requests cancellation of a job that isn't already terminal (Completed/Failed/Cancelled).
+    /// A job currently running has its pipeline's <see cref="CancellationToken"/> signalled, so it
+    /// stops at the next checkpoint (typically within one HTTP request / DB write) and the worker
+    /// marks it Cancelled. A job still sitting in Queued (enqueued but not yet dequeued by the
+    /// worker) is marked Cancelled directly; the worker skips it without ever starting it. Returns
+    /// false if the job id doesn't exist or is already terminal.
+    /// </summary>
+    Task<bool> TryCancelAsync(long jobId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -42,6 +62,13 @@ public sealed class IngestionQueue : IJobSubmitter
     private readonly LibraryOptions _options;
     private readonly Channel<long> _channel = Channel.CreateUnbounded<long>();
 
+    // Tracks the CancellationTokenSource actively driving each in-flight job's pipeline, keyed
+    // by job id. Registered by IngestionWorker just before it starts processing a job and removed
+    // once processing finishes (success, failure, or cancellation). A job id with no entry here is
+    // either not yet picked up by the worker, or already terminal -- TryCancel reports false for
+    // either case, which is surfaced to the caller as "nothing to cancel."
+    private readonly ConcurrentDictionary<long, CancellationTokenSource> _running = new();
+
     public IngestionQueue(LibraryStore store, IOptions<LibraryOptions> options)
     {
         _store = store;
@@ -49,6 +76,58 @@ public sealed class IngestionQueue : IJobSubmitter
     }
 
     public ChannelReader<long> Reader => _channel.Reader;
+
+    /// <summary>
+    /// Registers the token source that will drive <paramref name="jobId"/>'s pipeline, so a later
+    /// <see cref="TryCancel"/> call can find and signal it. Called by the worker right before
+    /// <see cref="IngestionService.ProcessAsync"/> starts.
+    /// </summary>
+    public void RegisterRunning(long jobId, CancellationTokenSource cts) => _running[jobId] = cts;
+
+    /// <summary>Removes the tracked token source once a job finishes, regardless of outcome.</summary>
+    public void UnregisterRunning(long jobId) => _running.TryRemove(jobId, out _);
+
+    public async Task<bool> TryCancelAsync(long jobId, CancellationToken ct = default)
+    {
+        // Running (or about to run): signal the pipeline's token. The worker's finally block
+        // sets the DB status to Cancelled once ProcessAsync unwinds, so we don't touch it here --
+        // doing so would race the worker's own terminal-status write for the same row.
+        if (_running.TryGetValue(jobId, out var cts))
+        {
+            try
+            {
+                cts.Cancel();
+                return true;
+            }
+            catch (ObjectDisposedException)
+            {
+                // Fell through: the job just finished and got unregistered/disposed between the
+                // lookup and the cancel. Fall back to the DB check below.
+            }
+        }
+
+        // Not running: only a job still sitting in Queued can be meaningfully cancelled here.
+        // Anything else (already Completed/Failed/Cancelled, or unknown id) is a no-op.
+        var job = await _store.GetJobAsync(jobId, ct);
+        if (job is null || job.Status != JobStatus.Queued) return false;
+
+        job.Status = JobStatus.Cancelled;
+        await _store.UpdateJobProgressAsync(job, ct);
+        return true;
+    }
+
+    public async Task<JobSubmission?> ReindexAsync(string repositoryId, CancellationToken ct = default)
+    {
+        var repo = await _store.GetRepositoryAsync(repositoryId, ct);
+        if (repo is null) return null;
+
+        // Route by the repo's actual source type rather than assuming git: SubmitAsync runs the
+        // GitHub-only URL parser, which rejects a web repo's non-GitHub URL outright (that's the
+        // "Only GitHub HTTPS or SSH clone URLs are supported" error for a web-sourced reindex).
+        return repo.SourceType == RepositorySourceType.Web
+            ? await SubmitWebAsync(repo.Url, repo.CrawlSameDomain, repo.MaxPages, force: true, ct)
+            : await SubmitAsync(repo.Url, force: true, ct);
+    }
 
     public async Task<JobSubmission> SubmitAsync(string url, bool force = false, CancellationToken ct = default)
     {

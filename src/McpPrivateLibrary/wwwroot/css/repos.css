@@ -253,6 +253,34 @@
   opacity: 0.55;
 }
 
+/* Cancel action: stops an in-flight/queued job in place. Styled as a
+   destructive-but-secondary action, distinct from the primary Reindex button. */
+.repos-screen .repo-cancel {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--_st-failed, #dc2626);
+  background: transparent;
+  border: 1px solid var(--_border);
+  border-radius: var(--_radius);
+  padding: 5px 10px;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, opacity 0.15s ease;
+}
+.repos-screen .repo-cancel:hover:not(:disabled) {
+  border-color: var(--_st-failed, #dc2626);
+}
+.repos-screen .repo-cancel:focus-visible {
+  outline: 2px solid var(--_st-failed, #dc2626);
+  outline-offset: 2px;
+}
+.repos-screen .repo-cancel:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 /* --------------------------------------------------------------------------
    Responsive: stack the pieces on narrow screens
    -------------------------------------------------------------------------- */

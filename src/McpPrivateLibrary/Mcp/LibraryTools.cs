@@ -207,6 +207,40 @@ public sealed class LibraryTools
     }
 
     /// <summary>
+    /// Forces a fresh re-crawl/re-embed of an already-indexed repository, identified by its hash
+    /// ID. Routes to the git or web pipeline based on the repository's own source type, so this
+    /// works for both GitHub repos and website sources. Bypasses the recent-index cooldown (this
+    /// is a deliberate, explicit action) but still refuses to queue a duplicate if a job for the
+    /// same repository is already running.
+    /// </summary>
+    /// <param name="repositoryId">Hash ID of the repository to reindex, from search_repositories or list_repositories.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A human-readable submission result including the job id when one was created.</returns>
+    [McpServerTool]
+    [Description("Force a fresh reindex of an already-indexed repository or website source by its hash ID. Re-runs the crawl/scrape -> chunk -> embed pipeline into a fresh generation and atomically swaps it in once complete; the existing index stays fully searchable throughout. Bypasses the recent-index cooldown but refuses to start a duplicate job if one is already running for this repository. Returns a job id to poll with job_status.")]
+    public async Task<string> reindex_repository(
+        [Description("Hash ID of the repository to reindex. Get IDs from search_repositories or list_repositories.")] string repositoryId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(repositoryId))
+            return "Please provide a repository ID.";
+
+        var result = await _submitter.ReindexAsync(repositoryId.Trim(), cancellationToken);
+
+        if (result is null)
+            return $"No repository found with id {repositoryId}.";
+
+        return result.Outcome switch
+        {
+            JobCreationOutcome.Created =>
+                $"{result.Message} Job id: {result.JobId}. Poll it with job_status.",
+            JobCreationOutcome.AlreadyInFlight =>
+                $"{result.Message} Job id: {result.JobId}.",
+            _ => result.Message,
+        };
+    }
+
+    /// <summary>
     /// Reports the current status and progress of an ingestion job by id.
     /// </summary>
     /// <param name="jobId">Identifier of the ingestion job to inspect.</param>
