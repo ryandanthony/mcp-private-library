@@ -221,7 +221,12 @@ public sealed class IngestionService
 
         job.Status = JobStatus.Scraping;
         await _store.UpdateJobProgressAsync(job, ct);
-        var pages = await _webScraper.ScrapeAsync(webRef, ct);
+        var pages = await _webScraper.ScrapeAsync(webRef, ct, async (processed, known, token) =>
+        {
+            job.FilesProcessed = processed;
+            job.FilesTotal = known;
+            await _store.UpdateJobProgressAsync(job, token);
+        });
 
         job.FilesTotal = pages.Count;
         job.FilesProcessed = 0;

@@ -50,12 +50,20 @@ public sealed class WebScraperService
     /// any fetch/parse failure (including JS-rendering detection) directly, since there's nothing
     /// else to index; a crawl logs and skips individual page failures so one bad link doesn't sink
     /// the whole run, but still fails overall if the start page itself can't be fetched.
+    ///
+    /// <paramref name="onProgress"/>, if given, is invoked after every page fetch during a crawl
+    /// with (pages fetched so far, pages known about so far). The "known about" total grows as new
+    /// same-host links are discovered, so it's a live lower bound on the crawl's eventual size
+    /// rather than a fixed denominator -- still far more useful to a caller than 0/0 for the whole
+    /// scrape.
     /// </summary>
-    public async Task<IReadOnlyList<ScrapedPage>> ScrapeAsync(WebSourceRef source, CancellationToken ct)
+    public async Task<IReadOnlyList<ScrapedPage>> ScrapeAsync(
+        WebSourceRef source, CancellationToken ct, Func<int, int, CancellationToken, Task>? onProgress = null)
     {
         if (!source.CrawlSameDomain)
         {
             var (page, _) = await FetchPageWithLinksAsync(source.StartUrl, host: null, ct);
+            if (onProgress is not null) await onProgress(1, 1, ct);
             return new[] { page };
         }
 
@@ -98,6 +106,13 @@ public sealed class WebScraperService
             foreach (var link in links)
             {
                 if (visited.Add(link)) queue.Enqueue(link);
+            }
+
+            if (onProgress is not null)
+            {
+                var known = results.Count + queue.Count;
+                if (source.MaxPages is int knownCap && known > knownCap) known = knownCap;
+                await onProgress(results.Count, known, ct);
             }
         }
 
