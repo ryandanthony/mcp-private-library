@@ -379,14 +379,14 @@ LIMIT @TopK;";
     {
         const string sql = @"
 SELECT r.id AS RepositoryId, r.slug AS Slug, r.url AS Url, r.summary AS Summary,
-       COUNT(DISTINCT d.id) AS Documents,
-       COUNT(DISTINCT c.id) AS Chunks,
+       (SELECT COUNT(*) FROM documents d WHERE d.repository_id = r.id AND d.generation = r.current_generation) AS Documents,
+       (SELECT COUNT(*) FROM chunks c WHERE c.repository_id = r.id AND c.generation = r.current_generation) AS Chunks,
        0.0 AS Score
 FROM repositories r
-LEFT JOIN documents d ON d.repository_id = r.id AND d.generation = r.current_generation
-LEFT JOIN chunks c ON c.repository_id = r.id AND c.generation = r.current_generation
-GROUP BY r.id, r.slug, r.url, r.summary
 ORDER BY r.slug;";
+        // Correlated subqueries, not LEFT JOINs: joining documents and chunks together fans out
+        // to documents x chunks rows per repository (millions for large doc sites), which made
+        // this query exceed the command timeout.
         await using var conn = _factory.Create();
         var rows = await conn.QueryAsync<RepositorySearchResult>(new CommandDefinition(sql, cancellationToken: ct));
         return rows.ToList();
