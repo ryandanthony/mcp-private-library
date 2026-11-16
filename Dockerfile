@@ -3,9 +3,14 @@
 #
 # The app clones repositories at runtime by shelling out to the `git` binary,
 # so git must be present in the FINAL runtime image (not just the build stage).
+#
+# Multi-arch (linux/amd64 + linux/arm64): the SDK stage always runs on the
+# native build platform and cross-publishes for TARGETARCH, so `dotnet` never
+# runs under QEMU emulation. Only the small runtime stage (apt-get) is emulated.
 
 # ---- Build stage ----------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+ARG TARGETARCH
 WORKDIR /src
 
 # Version supplied by CI (GitVersion). Defaults keep local `docker build` working.
@@ -15,12 +20,13 @@ ARG INFORMATIONAL_VERSION=0.1.0
 # Restore first (better layer caching): copy only project/solution metadata.
 COPY McpPrivateLibrary.slnx ./
 COPY src/McpPrivateLibrary/McpPrivateLibrary.csproj src/McpPrivateLibrary/
-RUN dotnet restore src/McpPrivateLibrary/McpPrivateLibrary.csproj
+RUN dotnet restore src/McpPrivateLibrary/McpPrivateLibrary.csproj -a $TARGETARCH
 
 # Copy the rest and publish.
 COPY . .
 RUN dotnet publish src/McpPrivateLibrary/McpPrivateLibrary.csproj \
         -c Release \
+        -a $TARGETARCH \
         -o /app/publish \
         --no-restore \
         -p:Version=${VERSION} \

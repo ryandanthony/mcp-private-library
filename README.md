@@ -255,7 +255,8 @@ Version numbers are tracked with git tags (`vMAJOR.MINOR.PATCH`).
 - **`.github/workflows/release.yml`** (push to `main`, i.e. each merged PR):
   1. GitVersion computes the next version from the latest tag plus commits.
   2. Creates and pushes a `vX.Y.Z` git tag.
-  3. Builds a Docker image tagged with the version number and pushes it to GHCR
+  3. Builds a multi-arch Docker image (`linux/amd64` + `linux/arm64`) tagged
+     with the version number and pushes it to GHCR
      (`ghcr.io/OWNER/REPO:X.Y.Z` and `:latest`).
   4. Creates a GitHub Release for the tag with generated notes.
 
@@ -277,6 +278,11 @@ directive in the merge/squash commit message:
 docker pull ghcr.io/ryandanthony/mcp-private-library:latest
 docker pull ghcr.io/ryandanthony/mcp-private-library:1.2.3
 ```
+
+Both `linux/amd64` and `linux/arm64` are published under the same tags; Docker
+picks the right one for the host. The .NET build cross-compiles on the native
+build platform (`--platform=$BUILDPLATFORM`, `dotnet publish -a $TARGETARCH`),
+so only the runtime stage's `apt-get` runs under QEMU.
 
 The runtime image includes `git` (required to clone submitted repositories) and
 records the build version in the `APP_VERSION` env var and the
